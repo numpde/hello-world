@@ -444,6 +444,51 @@ add other project types using those same working tools.
 Sources: [2], [3], [4], [8].
 
 
+11. Make one coherent change per commit
+---------------------------------------
+
+Before editing, check the selected branch, current revision, and working
+tree. Keep other people's edits, including already staged changes, out of
+your commit. Use the branch specified for the task.
+
+Keep each commit small enough to review and complete enough to understand.
+Include the code, focused tests, and documentation needed for that change.
+Explain migration steps when existing users must do something differently.
+Separate unrelated formatting, refactoring, and dependency updates.
+
+For a behavior bug, first show a focused regression test failing for the
+intended reason, then passing with the fix. Record those results. Separate
+the test and fix into two commits when the task calls for that history.
+
+Read back the final diff before committing. Run the narrowest meaningful
+checks on those final files; later edits require the affected checks again.
+Report checks that could not run and any remaining failures. Do not turn
+every small change into another full-suite run.
+
+Stage and commit explicit paths. Inspect exactly what will be committed,
+including the staged diff and file list. If the user names the files,
+respect that scope. Explain any conflict before widening it. Do not sweep
+unrelated work into a commit with blanket staging or commit-all commands.
+
+Every commit needs a concise imperative subject and a short explanatory
+body: what changed, why it was needed, what was checked, and what remains
+unverified. Name the checks actually run; a focused test pass must not be
+described as a full-suite pass.
+
+For your own unpushed work, fold corrections into the relevant commit when
+that makes the history easier to follow. Preserve any test/fix sequence
+requested for the task. Do not rewrite shared history or discard another
+person's work without explicit instruction.
+
+Follow the task's instructions for committing and pushing. Check the latest
+remote state before pushing and preserve concurrent changes. Respect the
+repository's merge and release conventions; ordinary work must not
+accidentally trigger a release. Report what was committed, what was pushed,
+and what remains unfinished.
+
+Sources: [1], [3], [6], [8], [9].
+
+
 Implementation examples
 -----------------------
 
@@ -453,8 +498,9 @@ older command names, host-tool assumptions, or other practices that this
 note improves.
 
 [1] conix
-    Command names, literal Make inputs, and borrowed versus created fixtures.
+    Command names, literal Make inputs, commit messages, and fixture ownership.
     https://github.com/numpde/conix/tree/0f5630645223bf048f8fc6236f4d539f8979b713
+    AGENTS.md; notes/001_implementation_plan.txt;
     notes/002_make_operator_contract.txt; repository_checks/test_make_inputs.py;
     tools/fixtures/pay_to_play.py
 
@@ -464,9 +510,10 @@ note improves.
     Makefile; tools/checker_operation.sh; packages/linux-idmap/README.md
 
 [3] agent-mail
-    Settings, Docker selection, cleanup, and failures printed last.
+    Settings, Docker selection, cleanup, failure reporting, and commit scope.
     https://github.com/numpde/agent-mail/tree/34285a1d8a30ba9d1315803bf336838ffda3443e
-    tools/deployment.py; tools/local_engine.py; tools/ops/docker_client.sh;
+    AGENTS.md; tools/deployment.py; tools/local_engine.py;
+    tools/ops/docker_client.sh;
     tools/ops/checker_operation.sh; tools/repository_test_runner.py;
     tools/ports/checker.md
 
@@ -501,9 +548,9 @@ note improves.
     AGENTS.md; compose/package-deps.yml; compose/packages.yml
 
 [9] fork-of-rindexer
-    Whole-job timeouts, cancellation, and offline Rust/Node dependencies.
+    Whole-job timeouts, offline dependencies, and merge/release conventions.
     https://github.com/numpde/fork-of-rindexer/tree/eaa9d08243e64f9f5dd5ad33551676f2647b78fd
-    tools/make-recipe.py; tools/make-timeout.mk;
+    AGENTS.md; tools/make-recipe.py; tools/make-timeout.mk;
     tests/make/test_make_timeouts.py; containers/development/prepare.py
 
 [10] nmr-gui-v1
