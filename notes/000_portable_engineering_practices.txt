@@ -126,12 +126,19 @@ Type annotations alone do not validate those inputs. Use explicit
 conversions and defaults; do not silently repair malformed values.
 Accept or reject unknown fields according to the particular interface.
 
+When several components enforce one acceptance promise, keep their limits
+and definitions consistent. For example, the front-end request limit must
+not exceed what the accepting worker or store can handle. If limits differ
+by design, name the distinct meanings and test that relationship rather
+than pretending the settings are interchangeable.
+
 Checks: exercise invalid and boundary values through the owning validator,
 literal shell-like arguments through launchers, override conflicts, and
-repeated initialization with existing settings. Constructors or schemas
-can prevent specific invalid states; they do not choose a sound contract.
+repeated initialization with existing settings. Check shared limits across
+components that implement one promise. Constructors or schemas can prevent
+specific invalid states; they do not choose a sound contract.
 
-Sources: [1], [3], [5], [6], [7].
+Sources: [1], [3], [5], [6], [7], [20].
 
 
 A3. One selected Docker engine
@@ -229,8 +236,14 @@ Generated files have one generator and a no-write check for differences.
 Lock updates remain an explicit command. Include newly added source
 folders in builds and checks; do not rely on a stale handwritten inventory.
 
+Inspect the assembled release output for unexpected files and secret-shaped
+contents, including private-key fields and credential-bearing headers.
+The scan is a second guard after excluding private inputs; it cannot prove
+that every possible secret was detected.
+
 Checks: inspect the selected context and package contents, run installed
-artifact tests, and verify publication uses the checked artifact identity.
+artifact tests, check public release contents for likely secret material,
+and verify publication uses the checked artifact identity.
 Source-tree tests alone cannot establish that packaging works.
 
 Sources: [4], [5], [6], [8], [9], [10], [11], [17].
@@ -404,6 +417,12 @@ read-only checkout. They need no product services, production secrets,
 model weights, or GPU. Live engine and service tests have separate commands.
 Fast tests can exercise launcher logic without controlling the engine.
 
+Discover newly added source roots and test candidates rather than relying
+on a frozen list. For security-sensitive source sets, compare the discovered
+files with a separately reviewed inventory; reject missing and unclassified
+files, symlinks, and unexpected file types. Use such exact inventories where
+they protect a real boundary, not as paperwork for every source directory.
+
 Cover the concrete rules above: command side effects, literal inputs,
 engine selection, offline access, build inputs, generated-file drift,
 permissions, cleanup, and absence of checkout debris. Where the project
@@ -426,7 +445,7 @@ declared. Repository files cannot prove that external branch, tag, or
 environment protections have been configured; verify those separately
 before relying on them.
 
-Sources: [3], [4], [6], [10], [11].
+Sources: [2], [3], [4], [6], [10], [11].
 
 
 PART B. EXTRA MECHANISMS WHEN A PROJECT NEEDS THEM
@@ -448,6 +467,13 @@ with compatible clients, artifact tests, and contract comparisons as
 appropriate. A schema diff alone does not establish behavior compatibility.
 Update generated clients deliberately; deployment must not silently
 regenerate them against a different sibling checkout.
+
+For JSON APIs and signed or hashed messages, distinguish decoding the raw
+bytes, validating the versioned wire shape, interpreting its meaning, and
+serializing canonical output. Strict decoding must reject duplicate JSON
+names and invalid numeric values before a schema validator sees the object.
+Semantic equivalence does not establish equality of signed, hashed, or
+published bytes. Test each promised layer against its own authority.
 
 An archived snapshot is not automatically a supported release. In the
 inspected NMR provider API, prerelease archives explicitly have no supported
@@ -523,11 +549,13 @@ do not rerun a scientific computation merely to resend its result.
 Mechanisms and checks: admission limits, readiness state, bounded shutdown,
 and the transaction, idempotency key, or retained delivery queue the workload
 actually needs. Test rejection before side effects, drain ordering, and
-selected duplicate, lost-reply, and restart cases. A retry loop alone does
-not provide safe repetition or exactly-once effects. Simple services need
-not acquire a universal queue framework.
+selected duplicate, lost-reply, and restart cases. Control races at observed
+events with barriers, held replies, or explicit state transitions, not guessed
+sleep durations. Put deadlines on tests so stalled work fails clearly.
+A retry loop alone does not provide safe repetition or exactly-once effects.
+Simple services need not acquire a universal queue framework.
 
-Sources: [6], [18].
+Sources: [6], [18], [21].
 
 
 B4. Credentials and trusted HTTP ingress
@@ -595,6 +623,35 @@ heavy-test commands, and fixture setup and teardown with ownership checks.
 Sources: [4], [7], [13], [14], [15], [16].
 
 
+B7. Deployment approval, verification, and recovery
+--------------------------------------------------
+
+For deployments with consequential external effects, prepare a concrete
+plan before obtaining permission to execute it. Show the chosen target,
+identity, artifacts, and expected changes. Approval must apply to the exact
+plan that will be executed, not a mutable name or a different set of inputs.
+Use separate credentials for preparation, approval, submission, and read-only
+verification when those roles have different authority.
+
+Rehearse the intended execution through the same relevant code path on a
+controlled target. A successful rehearsal is evidence about that rehearsal,
+not proof of what happened on the real target. After execution, inspect
+actual receipts, deployed bytes, and resulting state where applicable.
+Keep verification independent of the sender's assertion of success.
+
+Record identifiers and evidence before recovery may need them. A lost reply
+or interrupted submission can leave external effects. Recover the artifact
+and determine what took effect from retained records and read-only observations;
+do not silently repeat a possibly completed deployment.
+
+Mechanisms and checks: immutable plan identity, explicit approval matching,
+restricted send permissions, a realistic rehearsal, independent post-effect
+verification, and recovery that works without signing or sending again.
+Simple local development does not need a release approval ceremony.
+
+Source: [8].
+
+
 PART C. GUIDELINES FOR PEOPLE AND CODE REVIEW
 ============================================
 
@@ -606,6 +663,14 @@ logic independent of HTTP, deployment, and optional adapters where those
 boundaries help the project. Decide the important dependency directions
 before adding import checks. A clean import graph does not prove a good
 design.
+
+Use exact validated values for owned facts such as accepted requests,
+state transitions, and stored records. Use replaceable protocols for ports
+such as stores, streams, and external clients. Strictness at a domain boundary
+should not forbid deliberate substitutes at an adapter boundary.
+Equivalent boundaries should make equivalent promises; different responsibilities
+should remain visibly different. Do not multiply mode switches until their
+combinations obscure which component owns a decision.
 
 Abstract repeated mechanics when real callers benefit; do not force
 different domain facts through one generic abstraction. Group tools by
@@ -703,6 +768,17 @@ Add database, browser, restart, upgrade, and live-service tests when those
 features exist. Test a fix where its defect can be reproduced. Broaden
 testing when the change creates a concrete reason.
 
+First name the actual promise and the evidence that would establish it.
+An equivalent result is not necessarily an exact result: parsed-object equality
+cannot prove exact writer output, and a mock cannot prove the deployed service.
+Keep distinct correctness claims and test them against their relevant references.
+
+Use controlled events, not arbitrary sleeps, to exercise concurrency failures.
+If a known limitation must remain temporarily, retain a focused executable
+example and an explicitly reviewed inventory. Do not silently weaken normal
+tests or let an unbounded collection of expected failures become a green suite.
+An owner and retirement condition are recommended additions to that inventory.
+
 Test accepted inputs, refusals, effects, and diagnostic meaning. Avoid
 exact private wording or source-spelling checks unless that structure is
 itself the rule. Do not mistake test count or coverage percentage for
@@ -711,7 +787,7 @@ repeated full-suite runs, or a reporting framework before useful work can
 ship. Style checks enforce the project's chosen rules, not every donor's
 preferences.
 
-Sources: [3], [4], [6], [10].
+Sources: [3], [4], [6], [10], [11], [17], [21].
 
 
 C5. Python style: make the reasoning easy to follow
@@ -915,9 +991,11 @@ note improves.
     tools/fixtures/pay_to_play.py
 
 [2] container-tools
-    Make behavior, container cleanup, and Linux UID/GID mapping.
+    Make behavior, container cleanup, Linux UID/GID mapping, and exact source inventories.
     https://github.com/numpde/container-tools/tree/c337bcecc6f55493fc20cf9ce2a05d5561c399c1
-    Makefile; tools/checker_operation.sh; packages/linux-idmap/README.md
+    Makefile; tools/checker_operation.sh; packages/linux-idmap/README.md;
+    tests/repository/quality/source_inventory.py;
+    tests/repository/quality/test_source_inventory.py
 
 [3] agent-mail
     Settings, Docker selection, cleanup, failure reporting, and commit scope.
@@ -979,9 +1057,12 @@ note improves.
     checks/repo_contracts.py
 
 [8] dapp32
-    Separate download/install steps and restricted writable outputs.
+    Staged dependencies, restricted outputs, and reviewable deployment/recovery.
     https://github.com/numpde/dapp32/tree/757180474aa2b74e8ed4db7118320081b0a80899
-    AGENTS.md; compose/package-deps.yml; compose/packages.yml
+    AGENTS.md; compose/package-deps.yml; compose/packages.yml;
+    notes/026_release_workflow_unification_2026_10_24.txt;
+    tests/checks/test_release_approval_success.py;
+    tests/checks/test_release_rehearsal.py
 
 [9] fork-of-rindexer
     Whole-job timeouts, offline dependencies, and merge/release conventions.
@@ -1005,9 +1086,9 @@ note improves.
     notes/029_responsive_identifiers_20261104.txt
 
 [11] grimace-py
-    Checking package contents and limiting publication permissions.
+    Package contents, publication permissions, and distinct correctness oracles.
     https://github.com/numpde/grimace-py/tree/f7f4782ca034cd7d42fdf975903b69efe0c68526
-    .github/workflows/release.yml
+    .github/workflows/release.yml; docs/correctness-contracts.md
 
 [12] llm-systemd
     Checking running containers and testing network restrictions.
@@ -1046,9 +1127,11 @@ note improves.
     tests/unit/test_diagnostic_text.py; tests/unit/test_provider_diagnostics.py
 
 [17] vote-mcp
-    Building release files before choosing where to publish them.
+    Registry-neutral releases, secret scans, and executable known-risk inventory.
     https://github.com/numpde/vote-mcp/tree/092132cc216a26e1a02ac483fbbec54968f26c14
-    notes/322_on_registry_neutral_mcp_release_oci_plan_2026_05_23.txt
+    notes/322_on_registry_neutral_mcp_release_oci_plan_2026_05_23.txt;
+    tools/mcp_sidecar/tests/mixed/test_release_artifact_secret_scan.py;
+    apps/core/tests/normative/test_known_risk_posture_contract.py
 
 [18] nmr-provider-tools, additional runtime and state review
     Error propagation, minimal installation, atomic status files,
@@ -1098,3 +1181,17 @@ note improves.
 
     The helper extraction and diagnostic revisions also changed behavior.
     The helper documents possible partial writes; it is not an atomic-write example.
+
+[20] agent-mail, boundary and cross-component audit at 7611aa4
+    Exact domain facts vs replaceable ports, and common limits across accepting layers.
+    https://github.com/numpde/agent-mail/tree/7611aa4badd5335ebbc619ddfc2d9b27a06a0872
+    notes/020_code_beauty_engineering_standard.txt;
+    notes/020_code_beauty_engineering_standard/06_consistency_symmetry_protocols.txt;
+    agent_mail/messages/acceptance.py
+
+[21] nmr-provider-tools, causal lifecycle tests at 93bb3b9
+    Observed-event interleavings, bounded ownership, and distinct acceptance stages.
+    https://github.com/numpde/nmr-provider-tools/tree/93bb3b9b1125d3d2cf612d7304df414e03281f76
+    notes/064_causal_lifecycle_qualification.txt;
+    packages/provider-core/tests/integration/chat/adversarial/test_delivery_interleavings.py;
+    packages/provider-core/tests/integration/chat/adversarial/test_model_reply_permission.py
