@@ -1,0 +1,104 @@
+Hello World: first executable infrastructure — repository checks
+===============================================================
+
+9 November 2026
+Status: a priori implementation and qualification plan. This note records
+intent before writing the executable implementation. Note 000 supplies the
+engineering contracts; note 001 assigns this machinery to main.
+
+Scope and intended commits
+--------------------------
+
+Commit 1: this plan, on main.
+Commit 2: working Make interface, minimal shared Docker launcher, stdlib-only
+repository suite, and tests for the launcher's behavior, on main.
+No example application, generator, wheelhouse, generic provider framework,
+production deployment, or CI environment is introduced in these commits.
+
+Host boundary
+-------------
+
+Bare make and make help must work without Python, Docker, network, prompts,
+or writes. Derive help from annotated target definitions. Target names follow
+<resource>[/<subject>]/<action> except conventional help.
+
+make repository/check DOCKER_CONTEXT=<local-rootless-context>
+    Run repository tests only inside a locally selected Docker engine.
+    Do not execute them on the host or fall back to host execution.
+
+make repository/image/acquire DOCKER_CONTEXT=<local-rootless-context>
+    Explicitly download the exact pinned Python checker image. Never pull
+    images during repository/check; a missing image gives this command.
+
+A small host-side Python stdlib launcher resolves one explicitly supplied
+Docker context and its local Unix socket. Reject empty, remote, or unsupported
+contexts. Reset Docker, Compose, BuildKit, registry, and proxy settings before
+interacting with the selected engine; prepare a private empty Docker CLI
+configuration. Require the selected daemon to be rootless and capable of
+applying the mandatory limits. Keep the resolved endpoint constant through
+create, attachment, inspection, and cleanup. No source-level test runs on
+this host path; launcher logic is separately unit-testable.
+
+Checker container
+-----------------
+
+Use a pinned linux/amd64 Python 3.12 slim-bookworm image reference and verify
+its expected configuration identity before executing. Use --pull never for
+checks. The acquisition operation alone may contact a registry. Document
+support for Linux/amd64 host and user-owned rootless Unix-socket Docker.
+
+Run with no network, read-only root, no capabilities or escalation, fixed
+unprivileged UID/GID, bounded CPU/RAM/PIDs/tmpfs and execution time, no Docker
+socket/device/host namespace, and no extra writable bind mounts. Mount only
+classified public project files/trees read-only; refuse unexpected root
+entries and symlinks that might escape the checkout. No secrets or Git
+metadata may enter the checker. Use only Python stdlib in the image.
+
+Lifecycle and reporting
+-----------------------
+
+Create an operation-owned private directory and unique unguessable label
+before invoking Docker create. Record enough recovery information to inspect
+and remove resources after an interrupted operation. Bound Docker control
+calls, the test run, and cleanup independently. A terminated or timed-out
+Docker client does not establish that its container stopped. Find candidate
+owned containers, verify identity before deletion, remove them, and confirm
+absence. Cleanup failure fails an otherwise successful run; uncertain cleanup
+retains the private record and recovery instructions. Preserve primary
+failures and put actionable failure details at the end.
+
+Test evidence and acceptance
+----------------------------
+
+The standard-library test runner fails on zero collected tests; unexpected
+exceptions and assertion failures appear after the regular summary. Its
+first tests validate Make/help discoverability and launcher contracts.
+
+Test launcher behavior through fake Docker transport and deterministic
+adversarial fixtures, including missing/invalid context, contaminated
+ambient Docker variables, image absence, denied security limits, success,
+failed child, timeout/cancellation, create uncertainty, failed cleanup, and
+ownership mismatch. Tests inspect the actual argv/env the launcher sends;
+source-text checks alone cannot establish security behavior.
+
+Acceptance requires:
+1. make and make help are read-only without installed Docker.
+2. make repository/check invokes contained tests, never a host substitute.
+3. The checker image is immutable, acquisition explicit, runs offline.
+4. The launcher passes all mandatory confinement flags to the selected engine.
+5. A failed or interrupted job leaves either verified cleanup or useful
+   recovery information; independent cleanup failures are not swallowed.
+6. A completed suite reports its test count and failures at the end.
+7. A live Docker qualification is recorded separately from mocked behavior.
+
+Known verification constraint
+-----------------------------
+
+If a local rootless Docker engine is inaccessible during implementation, run
+all feasible host-side unit/mocked integration checks and report the missing
+live-container qualification explicitly. Do not replace required Docker
+checks with host execution or present mock success as proof of engine policy.
+
+After implementation, report a point-by-point a priori versus post-factum
+accounting, including intentional omissions, extra work, and unverified
+assumptions. Do not retroactively change this note to erase deviations.
