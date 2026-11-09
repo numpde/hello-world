@@ -1,0 +1,365 @@
+Hello World: shared mainline, executable examples on branches
+=============================================================
+
+9 November 2026
+Repository: numpde/hello-world
+Status: implementation plan. No tooling or example branch is created by this note.
+Normative engineering practices: notes/000_portable_engineering_practices.txt
+
+Decision
+--------
+
+Keep reusable project infrastructure on main. Keep complete, runnable example
+applications on maintained example/* branches. An example uses the
+infrastructure inherited from main; it does not carry a separately maintained
+copy. Improvements discovered through examples return to main, with tests,
+before examples consume them.
+
+Main is a working infrastructure product, not a specimen application.
+Examples exercise the product. Do not merge an entire example branch into main.
+
+This layout is initially a development and qualification arrangement, not
+yet a project generator or a promise of a stable external API. A future
+generated repository may need a different update mechanism.
+
+
+1. Responsibilities and boundaries
+-----------------------------------
+
+main owns:
+
+- The Make entry point, command definitions, help, and choice handling.
+- Shared configuration parsing, input validation, and project-type dispatch.
+- Docker context resolution, launch confinement, identity mapping, offline
+  execution, acquisition, build inputs, shared wheelhouse integration.
+- Deadlines, temporary-resource ownership, cleanup, and recovery.
+- Artifact checking, error reporting, repository checks, and CI machinery.
+- The common test harness and cross-branch example qualification.
+- The specification (note 000), this plan, and subsequent implementation
+  notes and contracts.
+
+An example branch owns:
+
+- One small but real application's source, package or service declaration,
+  app-specific dependencies, tests, and usage documentation.
+- Its own project identity, selected project type, runtime entry point, and
+  only the capabilities that application actually needs.
+- Application-specific test cases that prove the common machinery works
+  with a realistic consumer.
+
+An example may *use* generic extension points but may not redefine the
+common Make dispatcher, shared launch policy, wheelhouse logic, resource
+ownership rules, or infrastructure checks. When an example needs a new
+generic capability, add it to main with a concrete test, then use it in the
+example. Do not hide common fixes in a branch-local override.
+
+Use the normal application layout for each ecosystem; do not force Python,
+JavaScript, services, and data projects into an artificial shared source
+tree. Shared infrastructure must be discoverable by location and ownership,
+not by an arbitrary requirement that apps live in one nested directory.
+
+Illustrative layout (names are provisional, responsibilities are not):
+
+    main:
+        Makefile                   # shared entry point, no app recipe copies
+        infrastructure/            # shared typed helpers and launchers
+        tests/infrastructure/      # standalone contracts and fault tests
+        examples/catalog.toml      # branch registry, not copied app sources
+        .github/workflows/         # confined, least-privilege checks
+        notes/000_...txt
+        notes/001_...txt
+
+    example/python-package (adds to the inherited main tree):
+        project.toml               # identity, kind, needed capabilities
+        pyproject.toml
+        src/<package>/...
+        tests/application/...
+        docs/...                   # example-specific instructions, as needed
+
+    example/python-service (adds to the inherited main tree):
+        project.toml
+        pyproject.toml
+        src/<service>/...
+        tests/application/...
+        docs/...
+
+These paths are not a mandate to create a second configuration language.
+Prefer ecosystem-native metadata where authoritative. A small project
+declaration may identify the type, instance and capabilities that the
+shared tools cannot infer unambiguously. It is data, validated at the
+boundary, not a shell program. Do not duplicate version, dependencies,
+or entry-point facts already maintained by an authoritative package file.
+Keep custom knobs out of the common core until a second use case requires
+them; avoid an enormous generic manifest designed for hypothetical apps.
+
+
+2. Contracts between infrastructure and applications
+----------------------------------------------------
+
+A new project must be usable from a clean checkout in a supported host
+environment. Bare make explains available commands without prompting,
+writing files, or probing Docker. Missing inputs have an explicit resolution
+path, and unattended commands never wait for interactive selection.
+
+The mainline supplies verbs consistently with note 000. For instance:
+
+    make                             # read-only help/discovery
+    make repository/check            # fast offline infrastructure checks
+    make wheelhouse/check            # verify already acquired inputs
+    make wheelhouse/acquire          # explicit, bounded network acquisition
+    make test/unit/run               # confined tests, no implicit downloads
+    make image/runtime/build         # consume already available inputs
+
+Only applicable commands appear in a particular project's help. App-specific
+requests pass explicit data or a typed entry point to the infrastructure;
+they do not inject arbitrary Make expressions or unquoted shell fragments
+into an infrastructure-owned privileged operation. Application code executes
+with the privileges and permissions of the chosen confined role.
+
+The common dispatcher is not allowed to infer a Docker context from a
+convenient default or inherit environment that silently changes the selected
+engine. An explicit selection is resolved once and carried through build,
+test, cleanup, and any nested operation. Shared caches remain shared;
+temporary containers, networks, volumes, output directories and diagnostic
+records are individually owned and named by project/instance/run identity.
+Check names and labels before deletion; names alone confer no authority.
+
+The infrastructure's public commands and configuration schema will form
+a small tested contract. It must be possible to add another app kind
+without copying the lifecycle or security code. Do not design an abstract
+plugin hierarchy prematurely: implement an explicit second project kind,
+observe the actual common boundary, and extract only what the two need.
+
+A branch may not claim compliance because it imports helpers or passes
+static source checks. Execution and failure behavior must be measured.
+Mainline tests establish reusable mechanisms; example tests establish their
+actual end-to-end behavior.
+
+
+3. Branch management
+--------------------
+
+Maintain exactly one canonical branch per example, initially:
+
+    main
+    example/python-package
+    example/python-service
+
+Future examples require a distinct capability or ecosystem, not another
+nearly identical demo. Names are stable identifiers. Catalog maintained
+examples on main with their branch refs, kind, intended test commands, and
+any declared special requirements. Catalog data does not contain mutable
+copies of application code.
+
+An example starts from main. Its persistent diff should consist of
+application source, application dependency declarations, app tests, and
+example-only documentation/configuration. Check this mechanically against
+an owned-path policy after finding the branch's merge-base. If a branch
+modifies an infrastructure-owned path, fail qualification and show the
+changed files. Keep an explicit, reviewed exception mechanism for genuine
+bootstrap cases; do not allow a catch-all exception.
+
+Changes to infrastructure are made against main, with the smallest
+meaningful tests on main. A common fix discovered in an example should
+not be committed only to that branch and then forgotten. To update an
+example, integrate the latest accepted main and run its full qualification.
+
+Prefer rebasing maintained example branches onto main while they are
+controlled demonstration branches; a rebase rewrites example commit IDs.
+Use force-with-lease, never an unconditional force push, and do not rebase
+shared branches with consumers depending on immutable history. If those
+consumers emerge, adopt non-rewriting merges or immutable example tags.
+A reported qualification refers to exact commit IDs, not a floating
+branch name. Never claim a prior qualification still applies after a
+branch moves.
+
+Do not merge example applications back into main as a shortcut to update
+shared code. Do not cherry-pick app-specific tests into main under a
+generic name unless the test actually covers a generic contract.
+
+Git protections need to be configured and verified separately. A note
+or CI file cannot establish that protected branches require checks.
+
+
+4. Qualification of a proposed main change against example branches
+--------------------------------------------------------------------
+
+Testing example/* heads in isolation is insufficient: they may contain
+older versions of the common infrastructure. To validate a candidate main
+commit against an example, construct a disposable integration checkout:
+
+1. Resolve the exact candidate main commit and the exact example head SHA.
+   Fetch both refs without writing to either branch.
+2. Starting from the example revision, merge the candidate main revision
+   into the temporary checkout. Do not push this merge or rewrite the
+   example. A conflict is a qualification failure that identifies paths
+   requiring reconciliation.
+3. Reject unexpected changes to infrastructure-owned files that originate
+   in the example. Do not let its modifications silently override main.
+4. Run mainline repository contracts on the candidate revision; run the
+   example's declared checks and end-to-end workflow on the combined tree.
+   Give each run an isolated project identity and ownership marker.
+5. Record candidate-main SHA, example SHA, combined-tree identity, selected
+   engine/environment qualification, test results, failures, and unresolved
+   cleanup. Report failures last, after routine output and cleanup.
+6. Remove owned test resources and the temporary checkout. If stop or
+   removal is unconfirmed, retain recovery identifiers rather than
+   asserting success or deleting potentially live inputs.
+
+All work should run through the same user-facing Make entry points used
+locally. A proposed interface is:
+
+    make test/example/run EXAMPLE=python-package BASE=<candidate-sha>
+
+The target is proposed, not implemented. With EXAMPLE omitted, CI should
+run all cataloged maintained examples; an explicit selection runs only
+that one and reports what was skipped. Unknown selections or an empty
+catalog in a required check fail, not silently succeed. Only the example
+source at the captured SHA participates in that run.
+
+On main pull requests, the required gates are the independent mainline
+contracts and the disposable integration check for each maintained
+example. On example branch changes, run that example's ordinary checks
+and its integration against the selected main revision. On main after
+merge, and periodically if desirable, rerun the matrix to detect drift.
+Make drift visible; do not silently advance an example ref or assert that
+a previously checked floating branch remains qualified.
+
+The checkout and runner must have read-only repository permissions,
+minimal job token scope, pinned actions, and no release credentials or
+production secrets. Treat code from an example branch as executable input,
+not as trusted metadata. Do not grant a pull-request integration run
+privileged host access or publishing credentials. Local live Docker tests
+and CI checks must explicitly distinguish what environments they actually
+qualified; missing rootless or networking capabilities cannot be marked
+as passing tests.
+
+A breaking mainline change may require an example change prepared in
+coordination. Validate the actual candidate-main and candidate-example
+commit pair before landing either side. Do not weaken the gate merely to
+allow an incompatible transition. Keep compatibility shims short-lived,
+visible, and tested if they are genuinely needed.
+
+
+5. Two first applications, one infrastructure
+---------------------------------------------
+
+Implement only the minimum capabilities needed for a *complete* path
+through each example, not a collection of disconnected utility scripts.
+
+First: example/python-package. A deliberately small installable library
+with a CLI or public function and a small test suite. Exercise project
+identity, clean installation from a wheel and sdist outside the checkout,
+explicit dependency acquisition, shared wheelhouse reuse, offline build,
+artifact contents, runnable installed entry point, failure reports, and
+cleanup. The library's business logic should be trivial; the artifact
+and lifecycle checks should not be.
+
+Second: example/python-service. A small HTTP service with explicit
+startup, one useful request path, a representative handled error and an
+unexpected failure, and bounded shutdown. Exercise build/launch policy,
+only the necessary loopback or test-network access, status reporting,
+request deadlines, cancellation, retained diagnostics, and cleanup. Do
+not add PostgreSQL, a browser, GPU, or production ingress solely to fill
+out the demonstration. Add later examples only when their requirements
+justify new reusable features.
+
+Run both side by side, against the *same explicitly selected rootless
+engine and host wheelhouse*, from separate worktrees. Their caches can
+share bytes, but runtime resources and deletion authority must not
+overlap. Verify concurrent runs, one failed run while the other succeeds,
+and interruption without stealing or stranding sibling resources.
+
+
+6. First implementation sequence and acceptance gates
+-----------------------------------------------------
+
+Phase 0 — Establish the repository boundary.
+
+- Record branch naming, owned paths, catalog shape, supported host
+  assumptions, and the first two examples.
+- Keep main independently runnable and testable even without any app
+  declaration. Prove bare make and repository/check have no hidden
+  engine, network, configuration, or application requirements.
+- Build testable entry points for discovering commands and checking
+  branch ownership; do not create example branches just for display.
+
+Exit: main can explain and test its own common contract offline.
+
+Phase 1 — One complete package workflow.
+
+- Implement the smallest shared launcher/configuration/build/test path
+  needed by the Python package example.
+- Use the existing shared wheelhouse acquisition implementation rather
+  than maintain a parallel downloader. Pin the dependency boundary.
+- Exercise clean checkout, explicit acquisition, offline build, artifact
+  installation, test, inspection, failure, cleanup, and diagnostics.
+- Add concrete links from enforced note-000 rules to their implementation
+  and test commands. Leave other rules plainly planned.
+
+Exit: a fresh package example passes under the qualified environment,
+with no surprise downloads or left-behind temporary resources.
+
+Phase 2 — A second, materially different workflow.
+
+- Add the service example. Extract genuine shared requirements into main,
+  not branch-local overrides.
+- Qualify loopback/network policy, shutdown, cancellation, time budgets,
+  subprocess error propagation, and retained recovery evidence.
+- Run both examples concurrently against shared cache and engine.
+
+Exit: the two branches work independently and together, and one cannot
+break or clean up the other's run.
+
+Phase 3 — Cross-branch enforcement.
+
+- Add the branch catalog, path-ownership check, disposable merge
+  integration executor, local Make interface, and CI matrix.
+- Verify an incompatible change to common infrastructure fails the
+  example gate; a stale example ref cannot masquerade as validated.
+- Test merge conflict, malformed catalog, missing branch, failed job,
+  cancellation, and failed cleanup with accurate terminal reports.
+- Keep main's checks fast and container-confined; separate live-engine
+  qualification from tests that can run in CI without Docker.
+
+Exit: a proposed main commit is automatically checked against the
+captured heads of all maintained examples, with recorded provenance
+and no branch mutations.
+
+Phase 4 — Generator decision, only with real evidence.
+
+- Compare a branch checkout, starter-folder export, and generated
+  repository. Decide how a new project's infrastructure is pinned and
+  updated without overwriting application edits.
+- Establish whether shared helpers remain an externally versioned tool
+  or are copied into new projects; do not claim branch ancestry itself
+  is a maintenance mechanism for an exported independent repository.
+- Exercise an update from a prior generated project version before
+  promising that the project-generator interface is stable.
+
+Exit: generator and upgrade behavior are written as tested contracts,
+not inferred from the demonstration branches.
+
+
+7. Non-goals and known risks
+---------------------------
+
+Not in the initial build: a universal application framework, elaborate
+extension grammar, every ecosystem, database and GPU support, continuous
+publication, production service orchestration, or a guaranteed stable
+export format. Implement these only for a real application requirement.
+
+Branch-based examples are easy to inspect individually but do not appear
+together in an ordinary main checkout. The catalog and cross-branch
+integration gate address discoverability and test coverage; they do not
+replace documentation. Branch movement changes tested inputs, and a
+disposable merge may expose conflicts that an ordinary example checkout
+does not. Treat those as evidence, not as reasons to turn tests off.
+
+The primary success criterion is not number of supported project types.
+It is that ordinary users can complete an intentional, reproducible,
+confined project workflow, and a failure remains diagnosable without
+altering or deleting another project's state.
+
+This note commits the structure and order of work. It does not claim that
+any phase, tool, CI check, or example is already implemented.
