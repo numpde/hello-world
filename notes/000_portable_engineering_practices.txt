@@ -714,6 +714,120 @@ preferences.
 Sources: [3], [4], [6], [10].
 
 
+C5. Source layout, names, and explanations
+-----------------------------------------
+
+Use these conventions for Python source.
+The broader rules about grouping, names, and explanations apply to other languages too.
+
+Group statements by meaning
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Keep statements together when they form one reading step.
+Related assignments, a prompt and its flush, helper preparation, and a phase label
+with its operation belong together. Use blank lines between distinct checks,
+operations, reporting, and returns.
+
+    installation_phase = "enabling and starting the engine"
+    activate_engine(account)
+
+    installation_phase = "registering the Docker context"
+    register_context(account, engine_endpoint)
+
+Do not put a blank line after every statement.
+The early llm-systemd spacing pass did that too broadly; a later commit corrected it.
+Carry forward the correction.
+
+Keep simple calls, raises, and other expressions on one line when they read comfortably.
+Use multiple lines when the length or structure benefits from grouping.
+Related arguments can share a line; one argument per line is not a universal rule.
+
+    file_installation = as_user(
+        account, "/usr/bin/python3", helper, destination, f"{mode:04o}",
+        content=content, capture=True,
+    )
+
+Choose useful names and bindings
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Name a value after the fact or operation it represents.
+Prefer account_number to answer, engine_storage to storage, and installation_phase
+to phase when those distinctions matter. Distinguish context_endpoint from
+engine_endpoint. Name captured outputs file_installation, context_listing, or
+context_inspection rather than result or context.
+
+Use an assignment expression when a condition tests a value that its branch needs.
+Keep a separate assignment when construction or effect ordering deserves its own step.
+Do not repeat an observation just to print it; report the value used in the decision.
+
+    if (context_endpoint := context_inspection.stdout.strip()) != engine_endpoint:
+        raise ValueError(f"{context_endpoint = } differs from {engine_endpoint = }")
+
+Parenthesize tuple-unpacking targets, including loops and comprehensions.
+
+    for (number, account) in enumerate(choices, 1):
+        ...
+
+    (destination, file_mode) = (arguments.destination, arguments.file_mode)
+
+Write direct, factual diagnostics
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Use spaced debug f-strings for named diagnostic values.
+Apply A8's redaction and audience restrictions before emitting those values.
+Choose names that explain the values to the reader; avoid exposing incidental field
+expressions such as account.pw_name or exc.returncode as the diagnostic labels.
+
+    f"{service_user = }"
+    f"{account_home = !s} is not a directory"
+    f"Reused {destination = !s}; applied {file_mode = :04o}"
+
+Keep readable path conversion and appropriate numeric formats.
+Command arguments, generated configuration, and menu numbering keep their required
+formats. This convention does not apply to every interpolation.
+
+State the failed condition directly, with useful observed and required values.
+Remove repeated labels, obvious repair advice, and duplicated local rollback prose.
+Keep the cause, relevant next action, and meaningful partial-effect information at
+the boundary that can explain them; concision must not discard the A8 requirements.
+Report what is known: an OSError during account selection does not establish that
+no terminal exists. A saved file or a running engine remains an effect to report.
+
+Explain the code where its responsibilities live
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A useful module introduction explains its role and its relationship to callers.
+At important boundaries, explain the inputs, identity, results, ordering, side
+effects, and recovery responsibilities that a caller needs to know.
+Comments explain non-obvious reasons or constraints; docstrings do more than
+repeat the function name. Do not add a ritual checklist to every small function.
+
+Keep prose in coherent sentences and paragraphs.
+Break at sentence or sensible clause boundaries instead of leaving isolated words
+on a new line. Separate topics, such as normal behavior and retained partial writes.
+Preserve that paragraph structure when reusing the prose in command help.
+
+Put substantial executable helpers in ordinary source files with typed functions
+and small entry points. Readers should be able to navigate and inspect their effects.
+Avoid hiding a second program in a multiline string passed to python -c.
+Keep transport or staging in the caller and the helper's actual job in the helper.
+Use a named parser when validation and useful diagnostics warrant one; simple sorting
+lambdas remain suitable.
+
+Review these choices; check only explicit syntax rules mechanically
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+These conventions are contributor expectations, even when they require judgment.
+A checker can enforce a selected syntax convention, such as parenthesized unpacking.
+It cannot decide whether statements form one step, a name is informative, or a
+comment explains the right thing. No style checker is implemented by this note.
+Choose any later formatter or checker to preserve these conventions.
+This source history establishes neither a fixed numerical line limit nor mandatory
+use of assignment expressions everywhere.
+
+Source: [19].
+
+
 First implementation and decisions still to make
 ------------------------------------------------
 
@@ -900,3 +1014,37 @@ note improves.
     packages/provider-core/src/provider_core/delivery_store.py;
     packages/provider-core/tests/unit/normative/test_delivery_store.py;
     packages/provider-core/tests/unit/adversarial/test_delivery_store.py
+
+[19] llm-systemd, early source-style revisions on 5 November 2026
+    Logical grouping, compact expressions, precise names, diagnostic values,
+    tuple unpacking, conditional bindings, useful comments, and readable prose.
+    Final files inspected:
+    https://github.com/numpde/llm-systemd/tree/c385a2b424699a6467c295915bfe47efbde52c84
+    tools/llm.py; tools/install_file.py
+
+    The relevant changes and their reasons:
+    9e854fd: extract a typed helper from embedded Python.
+    https://github.com/numpde/llm-systemd/commit/9e854fdac52fe3db9cad086924f3ba5fe8427dfe
+    19e6e1a: keep short calls and raises on one line.
+    https://github.com/numpde/llm-systemd/commit/19e6e1ad8f5a82f3db348659f9ceac52f2ab6106
+    6466d2b: use debug f-strings for diagnostic values.
+    https://github.com/numpde/llm-systemd/commit/6466d2b23861e707460b1315ff80e1630062a16b
+    ae3709b: parenthesize tuple-unpacking loop targets.
+    https://github.com/numpde/llm-systemd/commit/ae3709b9b5c4deeb8f445cdaa8348fd08fc9a215
+    e98cf03: use conditional bindings where the condition tests and uses the value.
+    https://github.com/numpde/llm-systemd/commit/e98cf03a068128b48fb163374512d4c7eb707afc
+    78011ce: state failures directly and retain meaningful effect reporting.
+    https://github.com/numpde/llm-systemd/commit/78011ce7545bb843f9c521907b10a8621217511e
+    b741002: use domain-specific names in diagnostics.
+    https://github.com/numpde/llm-systemd/commit/b7410020db6d742f86823739c7b824688efe2d84
+    2fe1c00: correct excessive per-statement spacing; group coherent operations.
+    https://github.com/numpde/llm-systemd/commit/2fe1c00c82bc2de57ee45dd3a328dfab4797c430
+    46a877e: name subprocess outputs after their operations.
+    https://github.com/numpde/llm-systemd/commit/46a877e12b98e0cc06130250d0b079e75625a0b3
+    1d1da48: arrange source prose by sentences and paragraphs.
+    https://github.com/numpde/llm-systemd/commit/1d1da48f8848b229e680f044ca5c8985388c9eb2
+    c385a2b: explain contracts, correct misleading errors, and name the file-mode parser.
+    https://github.com/numpde/llm-systemd/commit/c385a2b424699a6467c295915bfe47efbde52c84
+
+    The helper extraction and diagnostic revisions also changed behavior.
+    The helper documents possible partial writes; it is not an atomic-write example.
