@@ -13,30 +13,49 @@ should explain the available commands. After explicitly downloading its
 dependencies, a developer should be able to build, test, and run the
 project without surprise downloads or unwanted temporary files left behind.
 
-The template should work for packages, command-line tools, backends,
-frontends, and mixed projects. Keep the common tools small. Add database,
-browser, GPU, and release tools when the project needs them.
+Keep the common tools small. Packages, command-line tools, backends,
+frontends, and mixed projects should share those tools. Add database,
+browser, GPU, and publication support only when a project needs it.
 
-Document the supported operating systems and Docker setup. A command
-that depends on Linux must say so. Keep those dependencies in the
-development tools, out of application code.
+What is enforced, and what needs judgment
+----------------------------------------
 
-These rules come from inspecting the repositories listed at the end.
-They describe what hello-world should provide. We have not rerun the
-source repositories' test suites for this review.
+At this revision hello-world contains this note, not the proposed tools.
+None of the mechanisms below is implemented here yet.
+
+Part A describes rules to build into the common tools. Part B describes
+extra mechanisms for projects with particular features. Each section
+names the implementation and checks that could enforce its concrete rules.
+These become claims of enforcement only when the mechanism exists and
+the relevant checks run in the supported environment.
+
+Part C contains engineering guidelines and review expectations. They
+include aims such as clear architecture, helpful explanations, and coherent
+commits. These matter, but a passing repository check cannot establish
+them. These remain expectations for contributors even when they need human
+review. Do not label a guideline "enforced" because a test searches for an
+approved phrase or class name.
+
+Prefer preventing a bad operation in the code that performs it. Check
+declarations mechanically when the declaration itself is the rule. Test
+runtime behavior when the actual result is what matters. A test provides
+evidence for the cases it exercises, not a guarantee about every case.
+
+The source references identify inspected code, tests, and design notes.
+We have not rerun those repositories' suites. A proposed extension is
+identified as such; finding a useful donor does not make hello-world ready.
 
 
-1. Make should tell people what to do
-------------------------------------
+PART A. RULES TO BUILD INTO THE COMMON TOOLS
+==========================================
+
+A1. Commands, help, and choices
+-------------------------------
 
 Make is the usual entry point for setup, builds, tests, running the
 project, and maintenance. CI calls the same commands.
 
-Use names of the form:
-
-    <resource>[/<subject>]/<action>
-
-For example:
+Use names of the form <resource>[/<subject>]/<action>, for example:
 
     wheelhouse/acquire
     wheelhouse/check
@@ -45,572 +64,676 @@ For example:
     deployment/status
     deployment/remove
 
-Create only the targets the project needs. Put instance names and other
-choices in parameters. Name the thing being operated on: test-runner
-image, runtime image, database, or deployment.
-
-Use verbs consistently:
+Create only the targets the project needs. Instance names and other
+choices are parameters. Use the same verbs for the same effects:
 
     acquire   Download selected external files or images.
-    build     Produce something from files already available.
-    check     Inspect existing inputs without changing or repairing them.
+    build     Produce something from inputs already available.
+    check     Inspect without changing or repairing the inspected state.
     run       Execute work, including tests with temporary resources.
-    create    Create something that will remain after the command ends.
+    create    Create something that remains after the command ends.
     apply     Update a selected deployment or configuration.
     status    Show existing state without changing it.
     remove    Delete the selected run's or deployment's resources.
-    publish   Upload a package or image that has already been checked.
+    publish   Upload an artifact that has already been checked.
 
-Add another verb only when it names a distinct useful action.
+Derive help from the maintained command definitions. Bare make shows
+tasks, prerequisites, effects, and examples. Keep prompts and side effects
+out of Makefile evaluation: help, completion, discovery, and dry runs must
+not prompt, contact Docker, download files, or change anything.
 
-Bare make should show the main tasks, prerequisites, effects, and useful
-examples. Keep help and targets in sync. Avoid several independent lists
-of supported commands.
+Offer a numbered menu when choices can be listed, such as saved contexts
+or deployments. Resolve choices during execution. An explicit value stays
+fixed; cancellation stops the command; unattended missing input fails
+instead of waiting. Otherwise explain which input is needed.
 
-When choices can be listed, such as Docker contexts or saved deployments,
-offer a numbered menu. Otherwise explain the missing input. A supplied
-value stays fixed. Unattended commands fail clearly instead of waiting
-for input. Users must be able to cancel.
+Keep progress out of stdout when stdout contains a machine-readable value.
 
-Help, completion, discovery, and dry runs must not prompt, contact Docker,
-download files, or change anything. Do this work only when a command runs.
-
-Print the result and the next useful command. Keep progress messages out
-of stdout when stdout is meant to contain a value for another program.
+Checks: exercise help and dry runs without an engine or network; detect
+unexpected writes and subprocess calls. Exercise explicit choices,
+cancellation, and unattended use through the actual command entry point.
+Help completeness and good names still need review.
 
 Sources: [1], [2], [3].
 
 
-2. Keep settings in one place and secrets separate
--------------------------------------------------
+A2. Settings and validation at input boundaries
+-----------------------------------------------
 
-Keep project defaults and examples in Git. Keep local preferences in an
-ignored settings file. Keep secrets in separate private files.
+Keep defaults and examples in Git, local preferences in an ignored file,
+and secrets in separate private files. Load secrets only into the process
+that needs them. Do not put their values in command lines, ordinary logs,
+image layers, or recovery records.
 
-Give secrets only to the process that needs them. Keep their values out
-of command lines, ordinary logs, image layers, and recovery records.
+Use one settings loader with a declared override order. Report effective
+nonsecret settings and their sources when asked. Keep missing, empty,
+and null values distinct where the contract distinguishes them. Read facts
+from their maintained source instead of keeping a second handwritten copy.
 
-State which command-line values can override local settings. Show the
-effective nonsecret settings and where they came from when asked.
-Distinguish a missing value from an explicitly empty one.
+Initialization creates missing files and preserves existing edits. Check
+paths before writing and reject conflicts. A selected named deployment
+keeps its identity, engine, and data location; a conflicting command-line
+value cannot silently replace them.
 
-Remembering a wheelhouse path is useful. Silently choosing a different
-Docker engine or deployment is dangerous. Those choices must be explicit,
-either in the command or in a configuration the user deliberately selects.
+Parse settings as data, never as shell or Make code. Construct argument
+lists so user values stay literal and application arguments cannot add
+Docker mounts, networks, or privileges.
 
-When deployments are added, each named deployment keeps its own settings.
-A conflicting command-line value must not quietly change its identity,
-data location, or engine.
+Validate external inputs before acting: types, required fields, allowed
+values, size limits, and relationships between fields. This includes
+configuration, HTTP requests, files, and replies from other processes.
+Type annotations alone do not validate those inputs. Use explicit
+conversions and defaults; do not silently repair malformed values.
+Accept or reject unknown fields according to the particular interface.
 
-Initialization creates missing settings and preserves existing edits.
-Check existing paths before writing. Report conflicts instead of
-overwriting configuration or secrets.
-
-Parse settings as data; do not execute them as shell or Make code.
-Pass user values as literal arguments. Application arguments must not be
-able to add Docker mounts, networks, or privileges.
-
-If information already exists in a maintained file, read or calculate it
-from that file. Avoid another manually edited copy. For example, do not
-maintain two dependency-version lists and add tests to keep them equal.
+Checks: exercise invalid and boundary values through the owning validator,
+literal shell-like arguments through launchers, override conflicts, and
+repeated initialization with existing settings. Constructors or schemas
+can prevent specific invalid states; they do not choose a sound contract.
 
 Sources: [1], [3], [5], [6], [7].
 
 
-3. Choose Docker once for the whole command
-------------------------------------------
+A3. One selected Docker engine
+------------------------------
 
-Choose a Docker context explicitly. Resolve it to an engine address and
-use that same address for all work, nested commands, inspection, and
-cleanup. A deliberately selected deployment configuration may supply
-the choice.
+Resolve an explicitly selected Docker context to an engine address once.
+Pass that address through all work, nested commands, inspection, and
+cleanup. A deliberately selected deployment configuration may supply it.
+Do not silently substitute a different engine or ask again halfway through.
 
-Clear inherited Docker, Compose, builder, and proxy settings that could
-change the command. Pass the settings it needs explicitly. Give registry
-credentials only to the download or publication step that needs them.
+Construct the child environment explicitly. Clear inherited Docker,
+Compose, builder, and proxy settings that could change the operation.
+Give registry credentials only to acquisition or publication when needed.
 
-Do not infer rootless operation from a context's name. Check the engine
-when that property matters. Commands using local bind mounts must use an
-engine with access to those host paths.
+Check rootless operation when it matters; a context name proves nothing.
+Require an engine that can access the host paths used for bind mounts.
+Recheck mutable facts before deleting or replacing resources.
 
-Once a choice is made, carry it through the operation without asking
-again. Recheck facts that may have changed before deleting or replacing
-resources.
+Checks: run launcher tests with conflicting inherited settings and verify
+the resolved endpoint reaches nested commands and cleanup. Separate live
+engine checks establish capabilities needed by the chosen operation.
 
 Source: [3].
 
 
-4. Download first; build and test offline
----------------------------------------
+A4. Acquisition, offline work, and the shared wheelhouse
+------------------------------------------------------
 
-Use separate commands for updating dependency choices and downloading
-the chosen files.
+Keep changing dependency choices separate from downloading the chosen
+files. Builds and ordinary tests cannot access the internet, pull images,
+update locks, or fetch missing tools. Installing verified local files is
+allowed. Integration tests may use their declared private test services.
 
-Builds and ordinary tests must not access the internet, pull images,
-update locks, or fetch missing tools. Installing from verified local
-dependencies is allowed. Integration tests may talk to their declared
-test services on private networks.
+Prepare all external inputs: base images, Docker build frontends,
+compilers, build backends, browser binaries, native libraries, and model
+files. Account for downloads hidden in installation scripts. The fetching
+tool itself needs a pinned, documented bootstrap path.
 
-Prepare everything needed for offline work, including base images,
-Docker build frontends, compilers, build backends, browser binaries,
-native libraries, and model files. Account for downloads hidden inside
-package installation scripts.
+Give acquisition workers only their manifests, locks, necessary
+credentials, and output locations. Do not mount application source,
+runtime secrets, or a writable checkout. Apply dependencies to the project
+in a separate offline step with only the required writable outputs.
 
-When unpacking downloads, reject paths outside the destination and limit
-the total extracted size.
+Enforce offline access in the launcher and build configuration, including
+image pulling and build initialization; setting a package manager's
+offline flag alone is insufficient. Where acquisition has a required
+route or destination limit, enforce it. A proxy environment variable
+does not prevent a process from bypassing the proxy.
 
-A download job gets only the manifests, locks, credentials, and output
-locations it needs. It must not receive application source, runtime
-secrets, or writable access to the checkout. If installing dependencies
-must write to the project, do that in a separate offline step with access
-only to the intended outputs.
+Reuse cached files first. Missing files produce the acquisition command
+to run. Corruption, bad permissions, and engine failures remain errors;
+they must not trigger an unexplained replacement download. Archive
+extraction rejects escaping paths and bounds the extracted size.
 
-Reuse cached files before requesting network access. If a dependency is
-missing, explain which command obtains it. Corruption, bad permissions,
-or an unavailable engine must not silently trigger a replacement download.
+Use one host-local wheelhouse across Python projects. Lockfiles select
+versions and accepted hashes; the wheelhouse stores the bytes. Verify
+platform compatibility and hashes before use. Give builds only their
+selected files where practical.
 
-Where downloads must follow a chosen route or contact only certain
-servers, enforce that restriction. Merely setting a proxy variable does
-not prove that a process cannot bypass it.
+Download to temporary files, verify completed bytes, and publish them
+without exposing partial contents or overwriting another writer's result.
+Concurrent writers must cooperate; preserve conflicts and report them.
+Keep unrelated cache entries and retain the wheelhouse after each run.
+Reuse the released wheelhouse tool. Other ecosystems keep their native
+locks and caches while following the same rules.
 
-Shared wheelhouse
-~~~~~~~~~~~~~~~~
-
-Use one host-local wheelhouse across Python projects. Lockfiles choose
-the versions and accepted hashes; the wheelhouse stores the files.
-
-Select files compatible with the project's Python version and platform.
-Verify their hashes before use. Give each build only its selected files
-where practical.
-
-Add missing files without disturbing unrelated contents. Download to
-temporary files and check the completed bytes. Never expose partial
-downloads to readers or overwrite another writer's result. Concurrent
-downloads must cooperate. Preserve conflicting files and report them.
-
-Keep the wheelhouse after builds and tests. Cleanup of a temporary run
-must not remove dependencies shared with other projects.
-
-Reuse the released wheelhouse tool instead of writing another downloader
-in each project. Other languages keep their normal lockfiles and caches
-while following the same rules.
-
-The tool used to fetch dependencies also needs a pinned, documented
-installation path. A fresh checkout must not depend on an unexplained
-tool already installed on the developer's machine.
+Checks: build and test with internet access denied, including an empty
+cache case that fails with acquisition instructions. Exercise corrupted
+files, conflicting writers, and archive bounds in the responsible tool.
+A failing download alone does not prove network isolation; see A6.
 
 Sources: [4], [8], [9], [14].
 
 
-5. Build the selected code and test the result
---------------------------------------------
+A5. Build selected inputs and check the delivered artifact
+---------------------------------------------------------
 
-Send only the files a build needs to Docker. Exclude secrets, local
-settings, unrelated caches, and temporary outputs. Check unsafe paths,
-symlinks, or file changes where they could alter what enters the build.
+Construct a minimal build context. Exclude secrets, local settings,
+unrelated caches, and temporary outputs. Reject unsafe paths or symlinks
+and handle source changes where they could alter the selected inputs.
+Local builds include intended worktree edits. Release and deployment
+artifacts record the exact source and dependency inputs used.
 
-Local development builds must include the intended worktree edits.
-For releases and deployments, record the exact source and dependencies
-used. Do not rebuild an artifact after checking it and then publish the
-replacement as though it were the checked artifact.
+Build once, check that artifact, and publish those same bytes. Run checked
+images by digest or image ID; a tag can move. Determine rebuilds from
+relevant inputs. Keep build and test dependencies out of the runtime
+unless the product needs them.
 
-Use an image digest or image ID when running a checked image. Tags can
-change. Rebuild a component when its relevant inputs change, without
-invalidating every other component unnecessarily.
+Exercise what users receive: an installed Python wheel or sdist outside
+the checkout; a JavaScript package's published files and public interface;
+a frontend's built bundle and serving configuration; a backend image or
+a native program's packaged executable.
 
-Keep build tools and test dependencies out of the runtime unless the
-product actually needs them.
+Generated files have one generator and a no-write check for differences.
+Lock updates remain an explicit command. Include newly added source
+folders in builds and checks; do not rely on a stale handwritten inventory.
 
-Test what users will receive:
-
-- Install a Python wheel or sdist and test it outside the source checkout.
-- Check a JavaScript package's published files and public interface.
-- Exercise a frontend's built bundle and serving configuration.
-- Run a backend's built image or a native program's packaged executable.
-
-These tests catch missing packaged files and runtime dependencies that
-source-tree tests can miss.
-
-Generated files have one generator and a check that reports differences
-without rewriting them. Updating a lockfile is a separate deliberate
-operation because package indexes change over time.
+Checks: inspect the selected context and package contents, run installed
+artifact tests, and verify publication uses the checked artifact identity.
+Source-tree tests alone cannot establish that packaging works.
 
 Sources: [4], [5], [6], [8], [9], [10], [11], [17].
 
 
-6. Give containers only what they need
--------------------------------------
+A6. Container access and resource limits
+----------------------------------------
 
 Run project build tools, package managers, and tests in containers.
-Keep host prerequisites small and documented. A host helper needs a
-specific reason, such as selecting Docker or inspecting Linux user IDs.
+Keep host prerequisites small and explicit. A host helper needs a reason,
+such as choosing Docker or inspecting Linux user IDs. State supported
+operating systems and engine capabilities.
 
-Start with:
+The launcher supplies these defaults:
 
-- No network.
-- Read-only source and root filesystem where possible.
-- Explicit writable outputs and limited temporary storage.
-- A user with the minimum required permissions.
-- Dropped Linux capabilities and no privilege escalation.
+- No network; read-only source and root filesystem where possible.
+- Named writable outputs and bounded temporary storage.
+- An explicit user with only the permissions the role needs, dropped
+  capabilities, and no privilege escalation.
 - CPU, memory, process, and log limits.
 - No Docker socket, host namespaces, devices, or broad host mounts.
 
-Give network access, a GPU, credentials, or a writable directory only
-to the container that needs it. Tests with a database can use a private
-test network. A local web server should bind only the intended interface.
+Declare exceptions by role. Only the worker needing a GPU, credential,
+network, or writable directory receives it. Test services use private
+networks; a local server binds only the selected interface.
 
-Do not assume that UID 1000 inside a container is UID 1000 on the host.
-Use the shared identity-mapping helper when private host files require
-it. Keep those files private; do not fix access by making them public
-or changing ownership across an entire directory tree. Service users
-inside containers are a separate choice from host-file ownership.
+Use measured UID/GID mappings for private host files. Do not assume
+container UID 1000 is host UID 1000, make private files public, or change
+ownership across a directory tree to make access work. Service user
+selection and host-file ownership are separate concerns.
 
-Check the actual container settings when establishing or changing the
-launcher. Where necessary, check the effective permissions and limits
-inside the container too.
+Checks: inspect actual launched containers when establishing or changing
+the launcher. Exercise effective permissions and limits where necessary.
+Reject unsupported required restrictions. A configuration-file check
+does not prove that the engine applied the restriction.
 
-If a platform cannot enforce a required restriction, report that and stop.
-
-To test blocked network access, first establish that the destination
-can be reached from a suitable control container. Otherwise a failed
-connection proves little; report the test as inconclusive.
+A negative network test needs a reachable control destination from a
+suitable control container. Without that control, report an inconclusive
+test rather than claiming the network is blocked.
 
 Sources: [2], [5], [6], [12].
 
 
-7. Finish or stop cleanly
-------------------------
+A7. Ownership, deadlines, cleanup, and recovery
+----------------------------------------------
 
-Every command must distinguish resources belonging to its run or selected
-deployment from resources it borrows. Record enough information to find
-what it created, including after an interrupted Docker call.
+Record which resources a run or selected deployment owns and which it
+borrows. Use ownership identifiers that survive interrupted creation.
+Names or timestamps alone do not authorize deletion. Isolate concurrent
+runs and prevent conflicting operations on the same retained resource.
 
-Delete only resources known to belong to that run or deployment. Never
-infer ownership from a familiar name or an old timestamp. Concurrent
-runs must not collide or delete each other's work.
+For temporary resources, stop their consumers, remove owned containers,
+networks, and volumes, confirm removal, then delete temporary inputs.
+Do this on success, failure, and cancellation. Keep the original failure.
+If work succeeds but required cleanup fails, return failure. Optional
+cache maintenance has a separate result and may be deferred.
 
-For temporary resources, cleanup happens in this order:
+Keep shared caches, persistent data, settings, secrets, and requested
+outputs. Provide explicit removal commands where needed. Routine cleanup
+must not use global Docker prune. A borrowed database or sibling fixture
+is removed only by its owner, after consumers stop; use the same test
+executor for borrowed and newly created fixtures.
 
-1. Stop the processes and containers using temporary inputs.
-2. Remove the run's temporary containers, networks, and volumes.
-3. Confirm that removal finished.
-4. Delete the temporary inputs.
+Finite jobs have an overall time budget with time reserved for bounded
+cleanup. Nested work receives the remaining work time. Expiry of the work
+budget must not consume or skip the cleanup allowance. Retries have limits.
+Services have bounded startup, requests or jobs, and shutdown; their
+intended running lifetime is a separate matter.
 
-Do this on success, failure, and cancellation. Keep the original error
-visible. If the work succeeded but required cleanup failed, report
-failure. Optional maintenance of old caches or images reports its own
-result and may be deferred without failing a successful build.
+Killing a Docker client does not prove the daemon stopped its work.
+Failed inspection does not prove absence. Retain files a surviving process
+may need and report identifiers and recovery commands when stopping or
+removal is unconfirmed. SIGKILL and host crashes cannot be handled by exit
+traps. Use labels or a small saved record when work can outlive its caller.
 
-Keep shared caches, persistent data, configuration, secrets, and requested
-outputs. Give each an explicit removal command when one is needed.
-Routine cleanup must not use global Docker prune.
-
-If a test borrows a database or another repository's fixture, it must not
-destroy it. A command that creates the fixture may remove it after all
-consumers have stopped. Use the same test code in both cases.
-
-Deadlines and uncertain outcomes
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Builds, tests, and maintenance jobs need an overall deadline and time
-to clean up. Nested commands share the remaining time. Retries have a
-limit and apply only to failures that might succeed on another attempt.
-
-Services need bounded startup, individual requests or jobs, and shutdown.
-Their intended running lifetime is separate from those limits.
-
-Killing the Docker client does not prove that a build or container stopped.
-If inspection fails, do not assume the resource has gone. Keep files that
-a surviving process may still need, report what may remain, and provide
-the command or identifiers needed to inspect and recover it.
-
-Exit traps cannot handle SIGKILL or a host crash. If work can outlive the
-command, keep enough ownership information to find and clean it up later.
-Container labels or a small saved record may be enough; a separate record
-is not required for every helper.
+Checks: exercise success, failure, cancellation, selected deadline and
+interruption cases, and concurrent ownership. Assert cleanup order and
+primary-error preservation. The promise is safe cleanup or retained
+ownership and recovery information, not that every crash leaves nothing.
 
 Sources: [1], [2], [3], [4], [9], [10], [13].
 
 
-8. Keep checks useful and failures readable
-------------------------------------------
+A8. Carry useful errors to the caller
+-------------------------------------
 
-Provide a fast repository-check command. It runs offline in a confined
-container, reads the checkout without changing it, and needs no product
-services, production secrets, model weights, or GPU.
+Implement error propagation through startup, configuration, builds,
+tests, workers, services, APIs, clients, and background work. Preserve
+the original cause when adding context. Catch only errors the code can
+classify or handle. An unexpected defect, storage failure, or transport
+failure must not become "invalid input", an empty result, or success.
+ValueError or TypeError alone does not establish bad caller input.
 
-Tests that start services or manage live Docker resources have separate
-commands. The fast checks can test launcher logic without controlling
-the engine.
+Use stable codes for machine decisions alongside useful explanations.
+Clients must not have to parse prose or infer the cause from an HTTP status.
+Carry operation, phase, and request or job identifiers across process
+boundaries. Retain messages, causes, and useful stack locations for the
+appropriate recipient.
+An unfamiliar error code must not erase its explanation. Keeping a Python
+cause is insufficient if the final CLI or GUI shows only "failed".
 
-Check mistakes that matter:
+Shell, Make, pipeline, and subprocess wrappers preserve failure status
+and useful stderr. Retain original exit codes or signals where useful.
+A continuing service can remain healthy after a failed job, but must
+report that job's failure to its caller.
 
-- Make help and dry runs cause no side effects.
-- User values cannot execute code or change Docker options.
-- Commands use the selected engine.
-- Offline commands cannot start downloading.
-- Build inputs exclude private and unrelated files.
-- Dependency files and generated files are consistent.
-- Containers have the intended permissions and writable paths.
-- Temporary resources are cleaned up correctly.
-- Tests do not leave bytecode, caches, or build output in the checkout.
+Keep caller cancellation, dependency timeout, and the caller's deadline
+distinct. Cancellation remains cancellation after bounded cleanup.
+Retain independent failures and identify work whose stopping is unconfirmed.
 
-When source folders are added, include them in the appropriate builds
-and checks. Do not let an old file list silently omit new code.
+Track effects accurately: rejected, not started, completed, still running,
+or unknown. A lost reply or timeout does not prove a mutation failed,
+a worker stopped, or a result was not accepted. Do not retry unless both
+the failure and the operation's repeat behavior allow it; see B3.
 
-Prefer tests of behavior: accepted input, rejected input, resulting
-effects, and useful error information. Avoid pinning exact private
-wording or checking source spelling when behavior is what matters.
-Use source-layout checks only where the layout itself protects a rule.
+Keep primary failures separate from cleanup, logging, diagnostic-storage,
+and error-delivery failures. Continue independent required cleanup. An
+error while printing a report must not erase the original cause or release
+ownership of work still running.
 
-A test command or requested selection that finds no tests must fail
-clearly. Offer focused selection through the existing suite, and keep
-whole-suite commands whole.
+Once a response has started or may have started, do not send a replacement
+unless the protocol supports it. Better diagnostics must not rewrite an
+accepted result or a saved command awaiting exact replay.
 
-Show actionable failures at the end, after routine output and cleanup.
-Keep useful, redacted diagnostics available. Preserve the original failure
-and report cleanup problems separately. Say which tests actually ran.
-Section 12 gives the error-reporting rules for the whole project.
+Redaction and retained diagnostics
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Testing priorities
-~~~~~~~~~~~~~~~~~~
+At a boundary that knows configured secrets, redact those values and their
+relevant encoded forms before truncation. Remove credentials, private keys,
+passwords, tokens, cookies, signed access URLs, and other material identified
+as confidential for that context. Pattern matching cannot find every secret.
 
-The first working version includes safe input handling, appropriate
-container permissions, and cleanup. Add focused tests for those rules
-as the relevant code is introduced.
+Render the result as literal text, handle terminal controls or markup,
+bound its size, and mark omissions. Escaping and truncation are not
+redaction. Avoid wholesale dumps of jobs, results, environments, headers,
+conversations, or traceback locals.
 
-Add database, browser, restart, upgrade, or live-service tests when the
-project needs those features. Test a fix at the level where the defect
-can be reproduced. Run broader tests when the change creates a reason
-to do so.
+Some information has a narrower audience. For example, a public
+authorization error may conceal whether a private resource exists while
+authorized operators receive the protected reason linked to that error.
+Implement these specific restrictions instead of suppressing every
+unfamiliar exception. Scientific input, a useful path, an offending scalar,
+or a remote component's message is not automatically secret.
 
-Do not require exhaustive failure testing, repeated full-suite runs, or
-a new reporting framework before delivering a useful working project.
-Style checks should enforce chosen project rules, not every preference
-found in the source repositories.
+Retain diagnostics that must survive cleanup or restart in a bounded,
+protected location with an inspection command and removal policy. Only
+point to evidence actually retained. Its lifetime is separate from the
+temporary work that failed.
 
-Sources: [3], [4], [6], [10].
+Checks: carry a distinctive cause through each changed reporting path
+to its actual CLI output, API response, UI, or saved report. Assert status,
+cause, context, known effects, and appropriate diagnostic access. Include
+unexpected defects and secondary failures where those paths exist.
+Put synthetic secrets inside useful messages, including near size limits;
+the secret must disappear while the explanation survives. These checks
+exercise known cases; they do not certify that all secrets are detectable
+or that every explanation is helpful. Those judgments belong in Part C.
 
+Some donor renderers still hide unfamiliar exception messages. That is
+a gap to fix, not a convention to copy. Reuse their useful propagation
+and redaction mechanisms without inheriting blanket suppression.
 
-9. Add the tools each project needs
-----------------------------------
-
-A Python package needs packaging and installed-package tests. A frontend
-needs a locked JavaScript toolchain, typechecking, bundle checks, and
-appropriate browser tests. A native program needs a prepared compiler
-and runtime packaging.
-
-A backend adds service configuration, health checks, and shutdown.
-A database adds restricted runtime credentials, separate schema
-administration, migrations, and disposable database tests.
-
-An ML project adds explicit model downloads, file verification, and
-optional GPU access. Pin model code, configuration, tokenizers, and
-preprocessing files as well as weights. Keep ordinary software tests
-independent of large assets where possible.
-
-When repositories run a shared integration test, use each repository's
-supported commands. Exchange the necessary endpoints and identifiers
-explicitly, and agree which process creates and removes each service.
-
-A release workflow checks a concrete package or image, then publishes
-those same bytes with credentials limited to publication.
-
-These additions must follow the same commands, configuration, and cleanup
-rules. Their existence does not require a universal workflow engine or
-a plugin system inside the template.
-
-Sources: [4], [7], [8], [9], [10], [11], [13], [14], [15], [16], [17].
+Sources: [5], [6], [7], [10], [14], [15], [16], [18].
 
 
-10. Keep the tools understandable and maintainable
--------------------------------------------------
+A9. Repository checks and CI permissions
+----------------------------------------
 
-Use pinned releases of suitable shared tools. For copied code, record
-where it came from and how it was changed. Provide a deliberate update
-procedure that preserves the project's own edits.
+Provide fast repository checks in an offline, confined container with a
+read-only checkout. They need no product services, production secrets,
+model weights, or GPU. Live engine and service tests have separate commands.
+Fast tests can exercise launcher logic without controlling the engine.
 
-Group tools by what they do. Add files, directories, flags, and helpers
-when they have a clear purpose. Keep the normal workflow easy to follow;
-put complicated error handling behind small, named functions.
+Cover the concrete rules above: command side effects, literal inputs,
+engine selection, offline access, build inputs, generated-file drift,
+permissions, cleanup, and absence of checkout debris. Where the project
+has chosen important module boundaries, check forbidden import directions.
+Do not impose one architecture on every project.
 
-Keep one useful operator guide and short instructions for coding agents.
-Separate current behavior from future plans. CI uses the same Make targets
-and gives publication permissions only to publication jobs.
+A test command or requested selection that finds no tests fails clearly.
+Offer focused selection through the existing suite; whole-suite commands
+remain whole. Report which tests ran and put actionable failures after
+routine output and cleanup.
 
-First build one complete example: explain its commands, choose settings,
-download dependencies, build and test offline, run, and clean up. Then
-add other project types using those same working tools.
+CI uses the same Make commands. Check jobs have read-only repository
+permissions and no publication or production credentials. Pin external
+actions to full commits; disable persisted checkout credentials. Limit
+publication permissions and release triggers to explicit publication jobs.
 
-Sources: [2], [3], [4], [8].
+Checks: inspect workflow permissions, action pins, checkout behavior,
+and allowed publication events. Check important import boundaries where
+declared. Repository files cannot prove that external branch, tag, or
+environment protections have been configured; verify those separately
+before relying on them.
+
+Sources: [3], [4], [6], [10], [11].
 
 
-11. Make one coherent change per commit
----------------------------------------
+PART B. EXTRA MECHANISMS WHEN A PROJECT NEEDS THEM
+================================================
 
-Before editing, check the selected branch, current revision, and working
-tree. Keep other people's edits, including already staged changes, out of
-your commit. Use the branch specified for the task.
+B1. Optional dependencies and supported interfaces
+--------------------------------------------------
 
-Keep each commit small enough to review and complete enough to understand.
-Include the code, focused tests, and documentation needed for that change.
-Explain migration steps when existing users must do something differently.
-Separate unrelated formatting, refactoring, and dependency updates.
+Keep optional HTTP, database, browser, and model dependencies with the
+features that use them. Install the basic package without extras and test
+its supported imports and functions. Loading the core must not eagerly
+load an optional adapter. This does not require every core to have zero
+dependencies. Report a missing requested capability clearly; do not catch
+every ImportError and mislabel a broken installed component as absent.
 
-For a behavior bug, first show a focused regression test failing for the
-intended reason, then passing with the fix. Record those results. Separate
-the test and fix into two commits when the task calls for that history.
+For public packages, CLI commands, APIs, configuration, and saved formats,
+declare the interfaces and versions supported. Test those actual promises
+with compatible clients, artifact tests, and contract comparisons as
+appropriate. A schema diff alone does not establish behavior compatibility.
+Update generated clients deliberately; deployment must not silently
+regenerate them against a different sibling checkout.
 
-Read back the final diff before committing. Run the narrowest meaningful
-checks on those final files; later edits require the affected checks again.
-Report checks that could not run and any remaining failures. Do not turn
-every small change into another full-suite run.
+An archived snapshot is not automatically a supported release. In the
+inspected NMR provider API, prerelease archives explicitly have no supported
+compatibility baseline. A template must let a project make that choice
+honestly while still protecting data it promises to retain.
 
-Stage and commit explicit paths. Inspect exactly what will be committed,
-including the staged diff and file list. If the user names the files,
-respect that scope. Explain any conflict before widening it. Do not sweep
-unrelated work into a commit with blanket staging or commit-all commands.
+Mechanisms and checks: dependency groups and lazy adapter imports; a minimal
+installation test; a declared support policy and tests against the selected
+versions. Choosing the promise and retiring it require review.
 
-Every commit needs a concise imperative subject and a short explanatory
-body: what changed, why it was needed, what was checked, and what remains
-unverified. Name the checks actually run; a focused test pass must not be
-described as a full-suite pass.
+Sources: [6], [10], [18].
 
-For your own unpushed work, fold corrections into the relevant commit when
-that makes the history easier to follow. Preserve any test/fix sequence
-requested for the task. Do not rewrite shared history or discard another
-person's work without explicit instruction.
 
-Follow the task's instructions for committing and pushing. Check the latest
-remote state before pushing and preserve concurrent changes. Respect the
-repository's merge and release conventions; ordinary work must not
-accidentally trigger a release. Report what was committed, what was pushed,
-and what remains unfinished.
+B2. Retained state, upgrades, and recovery
+-----------------------------------------
+
+Write retained files or records through an owner that provides complete
+old or complete new state. Use atomic replacement or a transaction, and
+locks or expected-version checks for competing writers. Preserve corrupt
+or unsupported state and report it; do not silently reset it to empty.
+Atomic visibility alone does not promise survival after a power loss.
+If an acknowledgement promises durable storage, implement that stronger
+guarantee explicitly.
+
+Database runtime credentials have only the access the application needs;
+schema administration is separate. Test upgrades from supported predecessors
+with representative populated data, not just an empty database. Check
+preserved relationships, interrupted migration and retry, and compatibility
+with old writers where coexistence is promised. State when old writers must
+stop. Keep historical conversion rules stable. Refuse a downgrade that
+would discard required data; reverting application code does not by itself
+reverse a data migration.
+
+Use separate retention rules for inputs, results, pending work, audit
+history, and diagnostics. Remove only eligible records whose live references
+allow it. Make large cleanup jobs bounded and resumable, without letting
+one busy record prevent progress forever.
+
+For irreplaceable data, state what must be backed up together, document
+restoration into a compatible version, and test the restored data for
+actual usability. This is a proposed requirement: the review did not
+establish a reusable, complete backup and restore implementation among
+the donors inspected.
+
+Mechanisms and checks: atomic write helpers or database transactions,
+conflict detection, populated migration tests, and focused corruption,
+interruption, and retention tests. The process-status file and delivery
+store in [18] provide concrete but different examples; neither makes every
+kind of state equally durable.
+
+Sources: [6], [18]. Backup and restore: proposed extension.
+
+
+B3. Services, background work, and safe repetition
+------------------------------------------------
+
+Distinguish a running process from initialized, ready, available for more
+work, and draining. Publish readiness from the actual owned runtime;
+expired status or a reused process ID must not imply readiness.
+
+Bound accepted work by count and, where payloads vary materially, by size.
+Refuse or defer work before accepting more than can be retained safely.
+On shutdown, stop admission, finish or account for accepted work within
+the deadline, and close storage and other dependencies last.
+
+For operations that may be repeated after a lost reply or restart, define
+an operation identity and duplicate/conflict behavior. Persist the original
+intent when recovery depends on it. Acknowledge durable acceptance only
+after the relevant commit. "Queued here" and "accepted by the remote
+service" are different states. Reconcile unfinished operations after restart;
+do not rerun a scientific computation merely to resend its result.
+
+Mechanisms and checks: admission limits, readiness state, bounded shutdown,
+and the transaction, idempotency key, or retained delivery queue the workload
+actually needs. Test rejection before side effects, drain ordering, and
+selected duplicate, lost-reply, and restart cases. A retry loop alone does
+not provide safe repetition or exactly-once effects. Simple services need
+not acquire a universal queue framework.
+
+Sources: [6], [18].
+
+
+B4. Credentials and trusted HTTP ingress
+----------------------------------------
+
+Where a service issues or manages credentials, define creation, activation,
+expiry, replacement, revocation, and recovery after compromise. Setup
+preserves identity or reports a conflict. The verifier enforces the states
+and validity periods the credential scheme supports. Removing a private
+copy is not the same as revoking its public authority; state how already
+issued capabilities are affected.
+
+For proxy deployments, configure trusted peers, the forwarding convention,
+and the public origin and scheme. Normalize only trusted metadata and
+reject contradictions before authentication or application effects.
+Do not trust a forwarding header because it is well formed.
+
+Mechanisms and checks: explicit management operations and verifier tests;
+real server-stack tests for the intended proxy path and spoofed alternatives.
+The donors provide credential-state and ingress checks, not a universal
+rotation system. Trust choices and recovery procedures require review.
+
+Source: [6].
+
+
+B5. Frontend state and usable interfaces
+----------------------------------------
+
+Tie asynchronous results to the request and view that own them. An older
+response must not overwrite a newer selection or cancel unrelated work.
+Represent pending, confirmed, rejected, and unknown outcomes accurately.
+Preserve unsaved work across the navigation and recovery cases the product
+promises, and make an intentional discard explicit.
+
+Use a locked toolchain, typechecking, built-bundle checks, and focused DOM
+and browser tests. Use semantic controls and explicit loading, empty,
+success, and failure states. Test request races and actual navigation behavior.
+Exercise essential controls with a keyboard, touch, narrow screens, and
+zoom; long identifiers must remain accessible in full.
+
+Mechanisms and checks: request ownership, explicit state transitions,
+draft retention where promised, and tests through the actual UI. Automated
+accessibility checks cover only part of usability. The NMR GUI has useful
+request-lifetime tests; its unsaved-work note also records remaining gaps.
+Treat those gaps as requirements to address, not implemented guarantees.
+
+Source: [10].
+
+
+B6. Large assets and integration across repositories
+---------------------------------------------------
+
+ML projects acquire and verify model code, configuration, tokenizers,
+preprocessing files, and weights explicitly. Grant GPU access only to
+the workers that need it. Keep ordinary software tests independent of
+large assets where possible.
+
+Shared integration tests use each repository's supported commands and
+exchange endpoints, identifiers, and ownership explicitly. The creator
+cleans up a fixture after all consumers stop; borrowers do not destroy it.
+
+Mechanisms and checks: pinned asset manifests and verification, separate
+heavy-test commands, and fixture setup and teardown with ownership checks.
+
+Sources: [4], [7], [13], [14], [15], [16].
+
+
+PART C. GUIDELINES FOR PEOPLE AND CODE REVIEW
+============================================
+
+C1. Architecture and understandable tools
+-----------------------------------------
+
+Give important rules and state changes a clear owner. Keep application
+logic independent of HTTP, deployment, and optional adapters where those
+boundaries help the project. Decide the important dependency directions
+before adding import checks. A clean import graph does not prove a good
+design.
+
+Abstract repeated mechanics when real callers benefit; do not force
+different domain facts through one generic abstraction. Group tools by
+their job. Add files, flags, wrappers, and directories for a clear purpose.
+Keep the normal path readable and complicated error handling in small,
+named helpers. Do not turn the template into a universal workflow engine.
+
+Use pinned shared tools rather than copying another context selector,
+downloader, or cleanup engine into every project. When copying is justified,
+record the source and adaptations and provide an update procedure that
+preserves local edits. Keep one useful operator guide and short agent
+instructions, with current behavior separate from plans.
+After a command, explain the result and show the next useful command
+when there is one.
+
+Sources: [1], [2], [3], [4], [6], [8].
+
+
+C2. Contracts, permissions, and honest explanations
+--------------------------------------------------
+
+Decide what external inputs mean, what defaults are safe, which interfaces
+are public, and what compatibility users can rely on. Remove obsolete
+internal aliases and shims when they serve no real caller. Do not break
+a public promise or discard existing data just because the code is young.
+
+Choose permissions, network exceptions, retention periods, trusted proxies,
+and confidential fields from the actual workload. Record those choices
+where the enforcing code reads them. Review whether the choices remain
+appropriate; tests cannot make that decision.
+
+Show the most useful explanation available, with sensitive material
+removed. Explain the operation, component, actual cause, useful field or
+location, expected and observed values where relevant, completed and
+uncertain effects, and the next reasonable action. A request ID helps find
+evidence; it does not replace an explanation already available.
+
+Attribute a model's or remote endpoint's explanation to its producer and
+say when it is unverified. Do not substitute an older, familiar cause for
+the current failure. Preserve useful excerpts for authorized recipients
+instead of treating all scientific values, paths, or unfamiliar messages
+as confidential. Review the final report for clarity and context as well
+as testing the propagation and redaction machinery.
+
+Sources: [5], [6], [7], [10], [14], [15], [16], [18].
+
+
+C3. Commit discipline
+---------------------
+
+Before editing, check the requested branch, current revision, and working
+tree. Preserve other people's edits, including staged changes, and keep
+them out of your commit. Keep each commit small enough to review and
+complete enough to understand: related code, focused tests, documentation,
+and necessary migration instructions.
+Separate unrelated formatting, refactoring, and dependency changes.
+
+For a behavior bug, demonstrate a focused regression test failing for the
+intended reason and passing after the fix. Record the results. Preserve a
+separate test/fix commit sequence when the task requests it.
+
+Read the final diff and run the narrowest meaningful checks on those final
+files. Later edits require the affected checks again. Report failures and
+checks that could not run; a focused pass is not a full-suite pass.
+
+Stage explicit paths and inspect the exact staged diff and file list.
+Respect named-file scope; explain a conflict before widening it. Do not
+sweep unrelated work into a commit with blanket staging or commit-all.
+
+Use a concise imperative subject and a short body explaining what changed,
+why, what was checked, and what remains unverified. Fold corrections into
+your own unpushed commits when that improves the history, while preserving
+requested test/fix history. Do not rewrite shared history or discard other
+people's work without explicit instruction.
+
+Follow the task's commit and push instructions. Check the latest remote
+state and preserve concurrent changes. Respect merge and release
+conventions so ordinary work does not trigger publication. Report what
+was committed, pushed, and left unfinished.
+
+Git can show branch, revision, staged paths, and exact content; hooks can
+check message structure. Those are mechanical aids, not proof of coherent
+scope, truthful explanations, or sufficient testing. Do not use a blanket
+every-commit-must-pass gate to block a requested regression-test/fix history.
 
 Sources: [1], [3], [6], [8], [9].
 
 
-12. Explain failures and preserve their causes
-----------------------------------------------
+C4. Test the important behavior without building a testing bureaucracy
+---------------------------------------------------------------------
 
-Show the most useful available explanation of a failure, with sensitive
-material removed. Apply this throughout: startup, configuration, builds,
-tests, scientific workers, services, APIs, clients, and background work.
+The first useful version already includes safe inputs, suitable container
+permissions, and cleanup, with focused tests introduced alongside them.
+Add database, browser, restart, upgrade, and live-service tests when those
+features exist. Test a fix where its defect can be reproduced. Broaden
+testing when the change creates a concrete reason.
 
-Carry the cause to the caller
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Test accepted inputs, refusals, effects, and diagnostic meaning. Avoid
+exact private wording or source-spelling checks unless that structure is
+itself the rule. Do not mistake test count or coverage percentage for
+proof of good behavior. Do not require exhaustive failure campaigns,
+repeated full-suite runs, or a reporting framework before useful work can
+ship. Style checks enforce the project's chosen rules, not every donor's
+preferences.
 
-Catch errors narrowly enough to know what failed. Keep the original cause
-when adding context. An unexpected programming, storage, or transport
-failure must not become "invalid input", an empty result, or success.
-At an API boundary, distinguish deliberate validation failures from
-unexpected exceptions. ValueError or TypeError alone does not prove that
-the caller supplied bad input.
+Sources: [3], [4], [6], [10].
 
-Keep caller cancellation, a dependency's timeout, and the caller's deadline
-distinct. Caller cancellation remains cancellation after bounded cleanup;
-retain independent failures and identify any work whose stopping remains
-unconfirmed.
 
-Give machine callers stable error codes and people useful explanations.
-Preserve both through wrappers and protocol conversions. Clients must not
-have to parse prose or guess the cause from an HTTP status. An unfamiliar
-code must not make its accompanying explanation disappear.
+First implementation and decisions still to make
+------------------------------------------------
 
-Keep useful exception messages, causal relationships, and stack locations
-available to the appropriate recipient. Preserving a Python cause is not
-enough if the final CLI or GUI prints only "failed". Across processes,
-carry the operation, phase, and request or job identifier with the error.
+Start with one complete example: choose a project identity and type,
+explain the supported host setup, show the commands, create local settings,
+acquire dependencies, build and test offline, run, and clean up. Verify
+that two fresh projects can share one engine and wheelhouse without names,
+ports, or cleanup interfering. Include a failure that leaves a useful
+report and either cleaned resources or explicit recovery information.
 
-Shell, Make, and subprocess wrappers must report a failed command as failed
-and preserve its useful stderr. Include the original exit code or signal
-when it helps explain the failure. Pipelines, logging, or cleanup must not
-turn failure into exit status zero. A continuing service may handle a
-failed job and remain healthy; it must still report that job's failure
-to its caller.
+Decide how a new repository selects its project type and replaces template
+names. Decide which tools are pinned shared dependencies and which small
+files belong to each generated project. Record an intentional update path
+that preserves project edits. A generator, a collection of starter folders,
+and the exact shared-tool boundary have not been selected by this note.
 
-Say what happened and what is still unknown
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-An error should explain, where applicable:
-
-- Which operation and component failed.
-- The actual reason, including a useful field, location, rejected value,
-  expected value, or system error.
-- What completed, what did not start, and what may still be running.
-- What is known about saved changes, results, and delivery.
-- What the caller can reasonably do next.
-
-A request ID helps locate the evidence; it must not replace an explanation
-already available. Attribute a model's or remote endpoint's explanation
-to that producer. If it has not been verified, say so without throwing it
-away. Do not promote an older, familiar cause into the primary diagnosis
-merely because the current failure is unfamiliar.
-
-Distinguish a rejected request from a lost or malformed reply after work
-started. A timeout does not prove that a write failed, a worker stopped,
-or a result was not accepted. Recommend or perform a retry only when the
-failure is retryable and repeating the operation is safe.
-
-Keep the primary failure separate from secondary failures in cleanup,
-logging, diagnostic storage, and error-report delivery. Preserve all useful
-reasons and continue independent required cleanup. A failure while printing
-an error must not erase it or release ownership of still-running work.
-
-If a response has started or may have started, do not send a replacement
-unless the protocol explicitly supports it. Improved diagnostics must not
-rewrite an already accepted result or a saved command awaiting exact replay.
-
-Remove sensitive material without losing the explanation
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Remove credentials, private keys, passwords, tokens, cookies, signed
-access URLs, and other material known to be confidential in that context.
-Give the redactor the configured secret values at the boundary that knows
-them. Pattern matching alone cannot identify every secret.
-
-Scientific input, an offending scalar, a useful path, and an external
-component's message are not automatically secret. Show relevant excerpts
-to recipients entitled to see them. Avoid dumping entire jobs, results,
-environments, headers, conversations, or traceback locals.
-
-Some facts need a narrower audience. For example, an authorization refusal
-may need to conceal whether a private resource exists. Keep the useful
-protected reason available to authorized operators, linked to the public
-error. Make each restriction specific; do not hide every unexpected
-exception merely because some errors contain secrets.
-
-Redact before truncating, including escaped forms of known secrets, so
-clipping cannot expose a secret prefix. Then render as literal text,
-handle terminal controls or markup, and bound its size. Preserve the
-useful cause when shortening a diagnostic and say what was omitted.
-Escaping and truncation do not remove secrets.
-
-Keep diagnostics that must survive cleanup or restart in a bounded,
-protected location. Document how to inspect them and when they are removed.
-Only direct the user to evidence that was actually retained.
-Diagnostic retention is separate from the lifetime of temporary work.
-
-Check the report the caller actually receives
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-For each reporting path being changed, test a distinctive cause through
-to its actual CLI output, API response, UI, or stored failure report.
-Check the reason, context, effects, failure status, and useful next step.
-Include an unexpected defect and a secondary cleanup or reporting failure
-where those paths exist.
-
-Put synthetic secrets inside otherwise useful messages: the secret must
-disappear while the explanation survives, including near size limits.
-Check behavior and diagnostic meaning rather than exact prose. Use focused
-tests and useful repository checks; this does not require a new error
-framework or an exhaustive failure campaign before useful work can ship.
-
-Some reviewed renderers still hide unfamiliar exception messages. This
-falls short of the transparency rule above; retain their useful mechanisms
-and replace blanket suppression with specific redaction.
-
-Sources: [5], [6], [7], [10], [14], [15], [16], [18].
+Then add another project type using the same working tools. Mark each
+implemented rule with its actual entry point and check command, and leave
+unimplemented rules visibly planned. Do not describe the template as
+enforcing this note merely because the note has been committed.
 
 
 Implementation examples
@@ -657,14 +780,33 @@ note improves.
     models/g_01_nmr_forward/runner/test_serving_worker.py
 
 [6] nmr-api-v1
-    Secrets, generated files, private file access, and useful API errors.
+    Input validation, module boundaries, API errors, CI restrictions,
+    supported contracts, service lifecycle, retained data, and credentials.
     https://github.com/numpde/nmr-api-v1/tree/9fe29815a2ddbccae43e98b17817da4ee5d1ec44
     AGENTS.md; Makefile; tools/container_user.py;
     repository_checks/test_dependency_lock.py;
     notes/123_repository_wide_error_transparency_20260911.txt;
     nmr_api/problem_mapping.py; nmr_api/security/problems.py;
     tests/repo-checks/test_error_transparency.py;
-    tests/unit/adversarial/test_problem_details.py
+    tests/unit/adversarial/test_problem_details.py;
+    tests/repo-checks/test_import_boundaries.py;
+    nmr_api/provider/request_schema_contracts.py;
+    tests/unit/adversarial/test_provider_request_schema_contracts.py;
+    nmr_api/provider/contract_releases/checks.py;
+    tests/unit/normative/test_provider_contract_releases.py;
+    .github/workflows/test.yml; repository_checks/test_workflow_posture.py;
+    nmr_api/http_exchange_runtime.py; nmr_api/application_runtime.py;
+    tests/unit/normative/test_http_exchange_admission.py;
+    nmr_api/operations/migrations/0051_upload_retention.py;
+    integration_tests/test_upload_retention_migration.py;
+    nmr_api/operations/upload_retention.py;
+    integration_tests/adversarial/test_upload_retention_progress.py;
+    nmr_api/security/authentication/rfc9421.py;
+    nmr_api/provider/managed_provider_convergence.py;
+    tests/unit/adversarial/test_rfc9421_credentials.py;
+    integration_tests/test_provider_credentials.py;
+    nmr_api/security/authentication/proxy.py;
+    integration_tests/test_asgi_proxy_stack_conformance.py
 
 [7] traefik-nmr-api
     Settings, integration, and command errors with causes and effects.
@@ -685,14 +827,19 @@ note improves.
     tests/make/test_make_timeouts.py; containers/development/prepare.py
 
 [10] nmr-gui-v1
-    Frontend tests, image cleanup, error display, and diagnostic redaction.
+    Frontend tests, image cleanup, error display, diagnostic redaction,
+    request ownership, client compatibility, and documented recovery gaps.
     https://github.com/numpde/nmr-gui-v1/tree/4eb4a690947a3bf30267d31861cd0428605b0ace
     docker/compose/tests.prod-shaped.yml; tests/e2e/README.md;
     docker/operations/image_cleanup.py;
     notes/008_authority_proof_test_budget_20260803.txt;
     app/src/api/problem-response.ts; app/src/diagnostics/redaction.ts;
     tests/unit/normative/signed-fetch-transport.test.ts;
-    tests/unit/normative/redaction.test.ts
+    tests/unit/normative/redaction.test.ts;
+    tests/unit/normative/request-lifetime.test.ts;
+    notes/011_pinned_client_api_compatibility_20261015.txt;
+    notes/016_unsent_description_recovery_20261103.txt;
+    notes/029_responsive_identifiers_20261104.txt
 
 [11] grimace-py
     Checking package contents and limiting publication permissions.
@@ -740,8 +887,16 @@ note improves.
     https://github.com/numpde/vote-mcp/tree/092132cc216a26e1a02ac483fbbec54968f26c14
     notes/322_on_registry_neutral_mcp_release_oci_plan_2026_05_23.txt
 
-[18] nmr-provider-tools, additional error-propagation review
-    Primary failures, cleanup, interruption, and delivery kept distinct.
+[18] nmr-provider-tools, additional runtime and state review
+    Error propagation, minimal installation, atomic status files,
+    exclusive queue ownership, exact delivery replay, and restart behavior.
     https://github.com/numpde/nmr-provider-tools/tree/4f86b60f97a14fa49a3075c3626d6826afc93da9
     packages/provider-core/src/provider_core/execution.py;
-    packages/provider-core/tests/unit/adversarial/test_execution.py
+    packages/provider-core/tests/unit/adversarial/test_execution.py;
+    packages/provider-core/pyproject.toml;
+    packages/provider-core/tests/native/test_installation.py;
+    packages/provider-core/src/provider_core/process_status.py;
+    packages/provider-core/tests/unit/normative/test_process_status.py;
+    packages/provider-core/src/provider_core/delivery_store.py;
+    packages/provider-core/tests/unit/normative/test_delivery_store.py;
+    packages/provider-core/tests/unit/adversarial/test_delivery_store.py
