@@ -1,821 +1,552 @@
-Hello World: portable engineering practices
-===========================================
+Hello World: how new projects should work
+========================================
 
-Date: 9 November 2026
+9 November 2026
 Repository: numpde/hello-world
-Status: design baseline for a batteries-included project template.
+Plan for the template; written before implementation.
 
-Purpose
+The aim
 -------
 
-A new project should explain itself, prepare its dependencies explicitly,
-build and test offline, run with declared permissions, and clean up
-everything it owns.
+A new project should be useful from the first checkout. Running make
+should explain the available commands. After explicitly downloading its
+dependencies, a developer should be able to build, test, and run the
+project without surprise downloads or unwanted temporary files left behind.
 
-This note synthesizes the strongest transferable practices found across
-our repositories. It defines intended template behavior. It is not a claim
-that hello-world already implements these requirements, or that every
-source repository implements them consistently.
+The template should work for packages, command-line tools, backends,
+frontends, and mixed projects. Keep the common tools small. Add database,
+browser, GPU, and release tools when the project needs them.
 
-The common foundation must support packages, command-line tools, backends,
-frontends, native software, and mixed projects. Additional capabilities
-follow the same operating rules and bring only the machinery they need.
+Document the supported operating systems and Docker setup. A command
+that depends on Linux must say so. Keep those dependencies in the
+development tools, out of application code.
 
-Portability means consistent behavior across projects and languages, with
-explicit platform requirements. Linux-specific identity and confinement
-mechanisms belong to the supported Linux tooling. Other platforms need
-their own implementation of the relevant guarantees. A missing platform
-capability must be reported explicitly.
-
-Source inspection took place on 9 November 2026. The pinned references at
-the end identify useful implementation examples and design decisions.
-Their runtime qualification suites were not rerun for this collection.
-Source choices are evidence for the synthesis; their incidental names,
-directory layouts, process topologies, and complexity are not requirements.
+These rules come from inspecting the repositories listed at the end.
+They describe what hello-world should provide. We have not rerun the
+source repositories' test suites for this review.
 
 
-1. One predictable operator interface
+1. Make should tell people what to do
 ------------------------------------
 
-Make is the supported entry point for development, checks, builds,
-execution, and maintenance. CI uses the same maintained commands.
+Make is the usual entry point for setup, builds, tests, running the
+project, and maintenance. CI calls the same commands.
 
-Public targets follow:
+Use names of the form:
 
-    <resource>[/<role-or-subject>]/<action>
+    <resource>[/<subject>]/<action>
 
-Examples of the grammar:
+For example:
 
-    image/runtime/build
-    package/build
-    frontend/build
-    test/unit/run
-    test/integration/run
-    wheelhouse/check
     wheelhouse/acquire
+    wheelhouse/check
+    image/runtime/build
+    test/unit/run
     deployment/status
-    deployment/apply
     deployment/remove
 
-These are examples, not a requirement to create every target in every
-project. Concrete identities belong in parameters.
+Create only the targets the project needs. Put instance names and other
+choices in parameters. Name the thing being operated on: test-runner
+image, runtime image, database, or deployment.
 
-Actions have stable meanings:
+Use verbs consistently:
 
-- acquire: retrieve explicitly selected external inputs.
-- build: produce an artifact from available dependencies and selected source.
-- check: inspect existing inputs or artifacts without repairing them.
-- run: execute work with a declared resource lifecycle.
-- create: create a retained resource and report its identity.
-- apply: reconcile a selected deployment or configuration.
-- status: observe existing state without mutation.
-- remove: retire the selected owned resource.
-- publish: publish an already prepared artifact.
+    acquire   Download selected external files or images.
+    build     Produce something from files already available.
+    check     Inspect existing inputs without changing or repairing them.
+    run       Execute work, including tests with temporary resources.
+    create    Create something that will remain after the command ends.
+    apply     Update a selected deployment or configuration.
+    status    Show existing state without changing it.
+    remove    Delete the selected run's or deployment's resources.
+    publish   Upload a package or image that has already been checked.
 
-Introduce prepare only when assembling a reusable environment is a
-distinct operation. Avoid synonyms, silent aliases, and intermediate
-commands without a useful operator purpose.
+Add another verb only when it names a distinct useful action.
 
-Bare make must explain available work, prerequisites, consequential
-effects, and how to proceed. An executing target with missing choices
-offers an actual inventory in a terminal or an actionable unattended
-error. Supplied choices remain fixed. Cancellation is an ordinary outcome.
+Bare make should show the main tasks, prerequisites, effects, and useful
+examples. Keep help and targets in sync. Avoid several independent lists
+of supported commands.
 
-Help, discovery, completion, query, and dry-run modes have no operational
-effects. They must work before dependencies, secrets, or an engine are
-configured. Selection and operational probes happen during execution,
-not while Make parses its files.
+When choices can be listed, such as Docker contexts or saved deployments,
+offer a numbered menu. Otherwise explain the missing input. A supplied
+value stays fixed. Unattended commands fail clearly instead of waiting
+for input. Users must be able to cancel.
 
-Public commands should report meaningful results and the next useful
-command. When a result is machine-readable, keep progress and diagnostics
-out of that result stream. Name resources by their purpose: a test-runner
-image, a runtime image, an acquisition gateway, or a disposable fixture.
+Help, completion, discovery, and dry runs must not prompt, contact Docker,
+download files, or change anything. Do this work only when a command runs.
 
-Use one maintained description of public operations. Help and dispatch
-must not acquire competing inventories that drift independently.
+Print the result and the next useful command. Keep progress messages out
+of stdout when stdout is meant to contain a value for another program.
 
-References: [1], [2], [3].
+Sources: [1], [2], [3].
 
 
-2. One authority for each consequential fact
-------------------------------------------
-
-Each important fact has a clear owner:
-
-- Dependency selection: a project or issuer manifest and lock.
-- Local preference: explicit local settings.
-- Deployment identity and topology: selected deployment configuration.
-- Secret value: its designated private source.
-- Build inputs: the captured input set.
-- Artifact identity: its immutable content identity.
-- Resource ownership: the operation or deployment that created it.
-- Generated output: its declared source and generator.
-
-Derived facts remain derived. Avoid adding a second summary authority
-and then adding checks merely to keep both copies synchronized.
-
-Validate raw input at the boundary that owns it. Pass structured values
-through the implementation after that boundary. Repeated parsing and
-validation of the same fact should have a concrete reason, such as a
-possible external change before an irreversible effect.
-
-Operator text remains data. Make inputs, paths, settings, and application
-arguments must not become Make expressions, shell commands, or container
-permissions. Use one small literal-input mechanism and structured
-subprocess arguments. Container creation grants and application arguments
-are separate inputs.
-
-Tests should exercise this boundary with meaningful hostile inputs and
-paths, including quoting and expression syntax. They should establish
-that the original value arrives intact and causes no unintended effect.
-
-References: [1], [3], [4].
-
-
-3. Local settings with clear ownership
--------------------------------------
-
-Use a documented data-only format and distinguish four categories.
-
-Committed project policy:
-    Reviewable defaults, dependency declarations, supported capabilities,
-    and commented examples.
-
-Ignored local preferences:
-    Nonsecret paths and convenience choices, documented overrides, and
-    an inspectable explanation of effective values.
-
-Named deployment configuration:
-    Explicitly selected configuration that owns established identity and
-    topology. Conflicting overrides fail clearly.
-
-Secrets:
-    Separate private storage, available only to the operation that needs
-    them. Secret values must not appear in ordinary logs or records.
-
-Initialization creates missing settings, preserves existing edits, and
-detects conflicts before changing anything.
-
-Define precedence per category. A command-line wheelhouse path can
-override a local preference. A product parameter must not silently change
-the identity of an established deployment.
-
-Defaults are acceptable when deliberate, documented, and visible.
-Missing or explicitly empty consequential input must not trigger an
-undisclosed fallback.
-
-A remembered shared wheelhouse location is a useful local preference.
-Execution engines, destructive destinations, and privilege grants need
-explicit selection or an explicitly selected configuration that owns
-them. Do not silently treat an ambient shell variable as that authority.
-
-Settings are parsed as data. Do not make ordinary local configuration
-executable through a shell source or Make include.
-
-There is no universal local-settings convention to copy unchanged from
-the surveyed repositories. This section is a synthesis of their strongest
-configuration ownership and initialization practices.
-
-References: [3], [5], [6], [7].
-
-
-4. Select the execution environment once
----------------------------------------
-
-An operation selects its environment, resolves its actual identity, and
-keeps that identity through preparation, execution, observation, nested
-work, and cleanup.
-
-For Docker, this includes the selected context and resolved endpoint,
-the admitted image identity, and the relevant namespace policy. Local
-bind-mount workflows require an environment with the corresponding local
-path semantics.
-
-Do not infer rootlessness or capabilities from a context's name.
-
-Ambient Docker, Compose, builder, proxy, or client settings must not
-redirect the operation. Use a narrowly scoped client environment.
-Acquisition and publication receive their own additional configuration
-and credentials.
-
-Avoid repeatedly asking for a choice already fixed for the operation.
-Recheck externally mutable facts where a subsequent effect depends on
-them, and preserve the distinction between selection and observation.
-
-An explicitly selected deployment may own its engine choice. Its saved
-policy must not be quietly replaced by an unrelated invocation value.
-
-Reference: [3].
-
-
-5. Separate acquisition from offline use
----------------------------------------
-
-Dependency resolution, lock updates, artifact acquisition, builds,
-tests, and publication have different permissions and effects.
-
-The normal workflow is:
-
-1. Choose dependencies deliberately. Updating dependency metadata is an
-   explicit operation.
-2. Acquire the selected inputs with declared network access.
-3. Verify and reuse prepared inputs.
-4. Build and run ordinary checks offline.
-5. Publish or deploy the prepared artifact through its explicit operation.
-
-Ordinary builds and tests must not fetch dependencies, resolve or update
-locks, pull images, or fetch missing tools. Installing from verified
-prepared local inputs is allowed. Missing prerequisites must explain the
-exact acquisition or preparation command needed.
-
-The acquired closure includes base images, build frontends, compilers,
-build backends, native libraries, browser binaries, code generators, model
-files, and any downloads otherwise hidden inside lifecycle scripts.
-
-A networked acquisition worker receives minimum dependency inputs and a
-dedicated output location. Application source, private configuration,
-and writable checkout access are outside that grant.
-
-Separate networked staging from offline application when installation
-must update local outputs. Grant the apply step only those outputs.
-
-Warm reuse must avoid unnecessary networking and unnecessary setup.
-Corruption, malformed metadata, permission errors, or an unavailable
-engine must not be interpreted as permission to download replacements.
-
-Network access is a declared capability. Acquisition routing and
-destination restrictions are distinct policies. Runtime operations that
-need external services declare those requirements separately.
-
-An offline promise must cover image and build-tool resolution as well
-as commands inside a build step.
-
-References: [4], [8], [9].
-
-
-6. Shared caches store artifacts; locks select them
+2. Keep settings in one place and secrets separate
 -------------------------------------------------
 
-Use the shared wheelhouse as the Python implementation of a general
-cache policy:
+Keep project defaults and examples in Git. Keep local preferences in an
+ignored settings file. Keep secrets in separate private files.
 
-- Reuse an operator-selected shared pool.
-- Select compatible artifacts from authoritative dependency metadata.
-- Verify selected bytes.
-- Add missing artifacts without replacing unrelated contents.
-- Publish completed downloads atomically without clobbering conflicts.
-- Coordinate concurrent readers and writers.
-- Preserve conflicting material and report it.
-- Give consumers only the selected inputs where practical.
-- Keep shared cache retention separate from operation cleanup.
+Give secrets only to the process that needs them. Keep their values out
+of command lines, ordinary logs, image layers, and recovery records.
 
-Other ecosystems retain their native lock and cache semantics.
-The portable contract concerns authority, integrity, and lifecycle;
-there is no need for a universal package format or resolver.
+State which command-line values can override local settings. Show the
+effective nonsecret settings and where they came from when asked.
+Distinguish a missing value from an explicitly empty one.
 
-Prefer the released shared wheelhouse tool over another downloader,
-resolver, locking protocol, or publication algorithm in each project.
+Remembering a wheelhouse path is useful. Silently choosing a different
+Docker engine or deployment is dangerous. Those choices must be explicit,
+either in the command or in a configuration the user deliberately selects.
 
-Disposable offline projections may adapt canonical metadata to a tool's
-local-path syntax. They must preserve the original identities and must
-not become a competing committed lock.
+When deployments are added, each named deployment keeps its own settings.
+A conflicting command-line value must not quietly change its identity,
+data location, or engine.
 
-Bootstrap tooling must itself have explicit source and artifact identity.
-Provide a usable pinned bootstrap path without relying on an ambient
-installation or an undeclared network fetch.
+Initialization creates missing settings and preserves existing edits.
+Check existing paths before writing. Report conflicts instead of
+overwriting configuration or secrets.
 
-Reference: [4].
+Parse settings as data; do not execute them as shell or Make code.
+Pass user values as literal arguments. Application arguments must not be
+able to add Docker mounts, networks, or privileges.
 
+If information already exists in a maintained file, read or calculate it
+from that file. Avoid another manually edited copy. For example, do not
+maintain two dependency-version lists and add tests to keep them equal.
 
-7. Build from explicit inputs and test what will ship
----------------------------------------------------
+Sources: [1], [3], [5], [6], [7].
 
-A build context is an explicit input grant.
 
-Each component identifies the source, manifests, generated inputs, and
-prepared dependencies it needs. Secrets, local settings, unrelated caches,
-and incidental checkout files stay outside that context.
+3. Choose Docker once for the whole command
+------------------------------------------
 
-Capture relevant paths, modes, and content. Check file types and path
-boundaries where inputs cross into a builder. Component identity should
-depend on its actual inputs, so unrelated components do not invalidate
-each other's builds.
+Choose a Docker context explicitly. Resolve it to an engine address and
+use that same address for all work, nested commands, inspection, and
+cleanup. A deliberately selected deployment configuration may supply
+the choice.
 
-Development builds may use an explicitly selected current worktree.
-Release and deployment preparation capture stable source and dependency
-identities.
+Clear inherited Docker, Compose, builder, and proxy settings that could
+change the command. Pass the settings it needs explicitly. Give registry
+credentials only to the download or publication step that needs them.
 
-Test the relevant deliverable:
+Do not infer rootless operation from a context's name. Check the engine
+when that property matters. Commands using local bind mounts must use an
+engine with access to those host paths.
 
-- Python package: install the wheel or sdist and test outside the checkout.
-- JavaScript package: check the emitted payload and its consumer interface.
-- Frontend: exercise the built bundle and serving configuration.
-- Backend: run the built service image.
-- Native executable: execute the packaged binary with its runtime inputs.
+Once a choice is made, carry it through the operation without asking
+again. Recheck facts that may have changed before deleting or replacing
+resources.
 
-Source-level unit tests remain useful. Artifact testing establishes the
-additional packaging and execution boundary.
+Source: [3].
 
-Build, test, and runtime roles have separate dependency closures where
-their needs differ. Runtime artifacts contain what execution requires.
 
-Successful preparation produces an artifact that publication or
-deployment consumes unchanged. Tags and readable names locate artifacts;
-immutable identities establish which bytes are used.
+4. Download first; build and test offline
+---------------------------------------
 
-Do not require release ceremony or immutable source snapshots for every
-ordinary local edit. Apply the stronger evidence at the boundary that
-uses it.
+Use separate commands for updating dependency choices and downloading
+the chosen files.
 
-References: [4], [5], [8], [9], [10], [11], [17].
+Builds and ordinary tests must not access the internet, pull images,
+update locks, or fetch missing tools. Installing from verified local
+dependencies is allowed. Integration tests may talk to their declared
+test services on private networks.
 
+Prepare everything needed for offline work, including base images,
+Docker build frontends, compilers, build backends, browser binaries,
+native libraries, and model files. Account for downloads hidden inside
+package installation scripts.
 
-8. Give each role only the capabilities it needs
-----------------------------------------------
+When unpacking downloads, reject paths outside the destination and limit
+the total extracted size.
 
-Project dependency installation, compilation, checks, and tests run
-through containerized tooling. Keep host orchestration prerequisites
-small and explicit. Host inspection that genuinely requires host access
-belongs in a named capability with declared requirements.
+A download job gets only the manifests, locks, credentials, and output
+locations it needs. It must not receive application source, runtime
+secrets, or writable access to the checkout. If installing dependencies
+must write to the project, do that in a separate offline step with access
+only to the intended outputs.
 
-The default execution posture provides:
+Reuse cached files before requesting network access. If a dependency is
+missing, explain which command obtains it. Corruption, bad permissions,
+or an unavailable engine must not silently trigger a replacement download.
 
-- No network.
-- Read-only inputs and root filesystem where applicable.
-- Narrow writable outputs and bounded scratch space.
-- An appropriate nonprivileged identity.
-- Dropped capabilities and no privilege escalation.
-- Resource and log limits.
-- No engine socket, host namespace, device, or broad host-directory access.
+Where downloads must follow a chosen route or contact only certain
+servers, enforce that restriction. Merely setting a proxy variable does
+not prove that a process cannot bypass it.
 
-Add permissions to the specific role that needs them. Database access,
-browser connectivity, GPU devices, publication credentials, and writable
-output are independent requirements.
+Shared wheelhouse
+~~~~~~~~~~~~~~~~
 
-Private bind-mount access must preserve private host permissions. Where
-namespace translation matters, use measured identity mapping. Service
-UIDs and host-user ownership are different contracts. Do not compensate
-for failed mapping with world-readable files, guessed IDs, broad ACLs,
-or recursive ownership changes.
+Use one host-local wheelhouse across Python projects. Lockfiles choose
+the versions and accepted hashes; the wheelhouse stores the files.
 
-Platform enforcement is explicit. Linux UID maps, capabilities, /proc,
-and cgroups belong to Linux tooling and do not leak into product code.
-Required guarantees cannot silently disappear on another engine or OS.
+Select files compatible with the project's Python version and platform.
+Verify their hashes before use. Give each build only its selected files
+where practical.
 
-Focused launcher qualification should inspect effective permissions,
-mounts, identity, networks, and resource limits. A failed network
-connection demonstrates isolation only when a positive control
-establishes reachability. Missing controls produce an inconclusive result.
+Add missing files without disturbing unrelated contents. Download to
+temporary files and check the completed bytes. Never expose partial
+downloads to readers or overwrite another writer's result. Concurrent
+downloads must cooperate. Preserve conflicting files and report them.
 
-Qualification belongs at the relevant launcher or platform boundary.
-Avoid repeating a complete environment campaign around every unit test.
+Keep the wheelhouse after builds and tests. Cleanup of a temporary run
+must not remove dependencies shared with other projects.
 
-References: [2], [5], [6], [12].
+Reuse the released wheelhouse tool instead of writing another downloader
+in each project. Other languages keep their normal lockfiles and caches
+while following the same rules.
 
+The tool used to fetch dependencies also needs a pinned, documented
+installation path. A fresh checkout must not depend on an unexplained
+tool already installed on the developer's machine.
 
-9. Every resource needs an owner and a lifetime
----------------------------------------------
+Sources: [4], [8], [9], [14].
 
-An operation knows which resources it creates, borrows, and retains;
-how creation is recorded; how retirement is established; and what
-happens when the outcome is uncertain.
 
-Cleanup authority comes from established ownership. A familiar name,
-endpoint, descriptor, or directory prefix is insufficient. Concurrent
-operations must not collide or acquire ownership of each other's work.
-
-The normal retirement order is:
-
-1. Stop and settle consumers.
-2. Retire owned containers and supporting resources.
-3. Verify retirement.
-4. Release mounted inputs and temporary state.
-
-Cleanup runs on success, ordinary failure, and cancellation. Cleanup
-errors remain visible and do not hide the primary failure. Failed
-inspection is not evidence that a resource is absent. Failure to meet an
-operation's required cleanup contract prevents reporting full success.
-Optional cache or image maintenance reports its own result and may defer
-without invalidating a successful build.
-
-Keep distinct lifetimes:
-
-- Disposable: test containers, temporary networks, captures, scratch.
-- Reusable: wheelhouse, prepared dependencies, build caches.
-- Persistent: deployment data, operator configuration, secrets.
-- Reviewable output: packages, release artifacts, reports.
-- Unresolved: inputs and records needed to reconcile uncertain work.
-
-Where effects can outlive their creating process, retain enough ownership
-information for recovery after interruption. Keep such records minimal,
-private where necessary, and free of secrets and application payloads.
-A simple synchronous helper does not require a generic journal framework.
-
-Normal exit traps cannot handle host death or SIGKILL. Recovery needs to
-establish ownership and whether resources are still in use before
-retiring abandoned work. Age alone is insufficient authority.
-
-A test that borrows a fixture cannot destroy it. A campaign that creates
-a fixture may retire it after its consumers have stopped. Both should
-reuse the same test executor.
-
-Automatic disposable cleanup and deliberate cache/image maintenance are
-different operations. Retained-image removal protects current outputs,
-borrowers, foreign aliases, and published artifacts; it rechecks before
-removal. Global prune is not ordinary project cleanup.
-
-References: [1], [2], [3], [4], [10], [13].
-
-
-10. Bound work, including nested work and cleanup
-------------------------------------------------
-
-Finite operations have an overall deadline, suitable command/request
-limits, cancellation handling, and cleanup grace.
-
-Nested calls share the remaining operation budget. Retrying or invoking
-another Make target must not silently restart the clock. Preserve
-interactive terminal behavior and useful cancellation status.
-
-Long-running services have bounded startup, health observation,
-individual work, shutdown, and resource consumption. Their intended
-service lifetime is explicit.
-
-A client timeout does not prove that a daemon-side or remote effect
-stopped. Keep such an outcome uncertain until reconciled. Necessary
-inputs and support resources remain available while their users may
-still be active.
-
-Use finite retries with explicit retryable causes. Resource limits,
-network timeouts, and an overall workflow deadline address different
-failure modes and should be chosen for the workload.
-
-The rindexer recipe supervisor is a useful implementation donor.
-Its POSIX mechanics and particular durations are platform and policy
-choices, not universal constants.
-
-Reference: [9].
-
-
-11. Checks protect meaningful contracts
---------------------------------------
-
-The common repository-check lane is read-only, offline, independent of
-product services and secrets, available locally and in CI, and quick
-enough for routine use.
-
-Its strongest responsibilities are:
-
-- Safe command discovery and literal input handling.
-- Explicit execution selection.
-- Acquisition/offline separation.
-- Dependency consistency and generated-output ownership.
-- Build-input inventories and write grants.
-- Declared container permissions.
-- Cleanup ownership, cancellation, and deadline behavior.
-- Accidental caches, bytecode, secrets, and build products.
-- Test discovery and exit-status integrity.
-
-Add checks for capabilities that the project actually contains.
-Keep source inventory complete when new components are introduced.
-The checker must not quietly omit new code because its own input
-allowlist became stale.
-
-Behavioral tests establish acceptance, rejection, effects, and diagnostic
-meaning. Structural checks protect actual structural boundaries.
-Exact private wording, implementation spelling, and duplicated
-projections must not become accidental contracts.
-
-Prefer cause, context, and effect assertions over full error-message
-matches. Source-text checks need a specific boundary they protect.
-Style heuristics need an explicitly chosen scope and enforcement level.
-
-Use the existing owning suite for focused tests. Aggregate suites must
-not silently turn into filtered runs. Keep the ordinary lane green;
-future architecture expectations are separate until they become the
-current contract.
-
-Deterministic generated artifacts have one writer and a no-write check.
-Dependency lock refresh is an explicit transaction against mutable
-external inputs; it is not automatically deterministic regeneration.
-
-Reporting is part of the interface:
-
-- No green result when no tests ran.
-- Full diagnostics remain available.
-- Actionable failures appear at the end.
-- Original exit status is preserved.
-- Cleanup failures are reported separately.
-- Machine-readable results are separate from progress.
-- Results state what was exercised and identify any relevant omissions.
-
-Use meaningful focused tests for changed behavior and adopted mechanisms.
-Broaden testing to resolve a concrete risk or satisfy a relevant delivery
-gate. Test count, repeated runs, and duplicated proofs are not goals.
-
-References: [3], [4], [6], [10].
-
-
-12. Keep capability growth separate from assurance depth
--------------------------------------------------------
-
-The first useful path includes its essential authority, confinement,
-ownership, and cleanup guarantees. Broader capabilities and deeper
-assurance grow from actual requirements.
-
-There are two independent dimensions:
-
-Capabilities:
-    Add package, service, database, integration, deployment, or publication
-    machinery when the project needs it.
-
-Assurance:
-    Use focused contracts first, then relevant integration and runtime
-    checks, then broader fault, compatibility, stress, and performance
-    work where justified.
-
-A plain package needs no database lifecycle machinery. An ordinary
-frontend needs no model downloads. A routine edit does not automatically
-require a platform-wide qualification campaign.
-
-Introducing persistence, remote effects, shared resources, or deployment
-expands the necessary ownership and recovery obligations. Essential
-safeguards accompany that capability from its first useful implementation.
-
-Preserve the functional-first prioritization gradient:
-
-- Deliver a complete useful workflow with its essential guards.
-- Extend that working path with additional capabilities and recovery.
-- Add broader assurance and measured optimization for demonstrated needs.
-
-General oracles, exhaustive matrices, mutation/shrinking frameworks,
-repetition quotas, and extensive evidence records are not automatic
-prerequisites for the first useful path. Do not encode implementation
-tiers into parallel target families.
-
-Reference: [4], especially note 066.
-
-
-13. Complete components for different projects
-----------------------------------------------
-
-Each selected component follows the common contract and owns its extra
-dependencies, outputs, permissions, and tests.
-
-Python package or CLI:
-    Shared wheelhouse; separate runtime/build/test dependencies; packaging;
-    installed-artifact tests; public package payload checks.
-
-JavaScript/TypeScript package or frontend:
-    Locked acquisition; lifecycle-script policy; semantic typechecking;
-    offline builds and tests; package or bundle checks; browser tooling
-    when required by the product.
-
-Backend:
-    Service image; explicit configuration and secrets; bounded startup and
-    shutdown; health; persistence and recovery where the product needs it.
-
-Database:
-    Separate administration/schema-owner/runtime authority; disposable
-    tests; migration workflow; real database tests for database semantics.
-
-Rust or native software:
-    Prepared toolchain and dependencies; offline compilation; packaged
-    runtime inputs; actual-artifact execution.
-
-ML or data-heavy software:
-    Explicit large-artifact acquisition; pinned model code, configuration,
-    tokenizer, preprocessing assets, and weights; bounded archive handling;
-    offline verification; optional device grants. Ordinary software tests
-    should not require heavyweight assets or live credentials unnecessarily.
-
-Multiple services or repositories:
-    Declared integration interface; exact handoff; consistent execution
-    identity; explicit ownership; consumer-before-provider retirement.
-    Use each producer's supported lifecycle interface.
-
-Deployment or publication:
-    Retained configuration; artifact identity; narrowly scoped credentials;
-    safe recovery; preparation followed by publication of the same bytes.
-
-Use standard ecosystem mechanisms behind these boundaries. Do not make
-every generated project carry every toolchain, service, or qualification
-matrix. Product code remains independent of repository orchestration.
-
-Additional reference examples: [7], [9], [10], [11], [13], [14], [15], [16].
-
-
-14. Maintain the template and its descendants
+5. Build the selected code and test the result
 --------------------------------------------
 
-For each shared mechanism, make an explicit maintenance choice:
+Send only the files a build needs to Docker. Exclude secrets, local
+settings, unrelated caches, and temporary outputs. Check unsafe paths,
+symlinks, or file changes where they could alter what enters the build.
 
-- Consume a pinned released tool when its interface fits.
-- Keep project-owned policy readable in the generated repository.
-- Record donor revision and deliberate adaptations for copied tooling.
-- Provide an intentional update procedure that preserves local changes.
+Local development builds must include the intended worktree edits.
+For releases and deployments, record the exact source and dependencies
+used. Do not rebuild an artifact after checking it and then publish the
+replacement as though it were the checked artifact.
 
-The shared wheelhouse tool and linux-idmap are candidates for released
-tooling dependencies. They do not imply a product dependency on provider
-services or scientific code.
+Use an image digest or image ID when running a checked image. Tags can
+change. Rebuild a component when its relevant inputs change, without
+invalidating every other component unnecessarily.
 
-Keep an operator guide and a concise agent execution contract.
-Document current behavior and clearly label future work. Group tools
-by responsibility. A new file, directory, target, adapter, or abstraction
-needs a concrete purpose or boundary.
+Keep build tools and test dependencies out of the runtime unless the
+product actually needs them.
 
-CI calls the maintained Make interface and declares its selected
-environment. Keep ordinary CI permissions narrow and grant publication
-credentials only to publication work. Preserve reviewed artifact identity
-between preparation and release.
+Test what users will receive:
 
-A template update must have a clear scope and result. Avoid an automatic
-mechanism that silently overwrites a descendant's product decisions.
+- Install a Python wheel or sdist and test it outside the source checkout.
+- Check a JavaScript package's published files and public interface.
+- Exercise a frontend's built bundle and serving configuration.
+- Run a backend's built image or a native program's packaged executable.
 
-References: [2], [3], [8], [11].
+These tests catch missing packaged files and runtime dependencies that
+source-tree tests can miss.
 
+Generated files have one generator and a check that reports differences
+without rewriting them. Updating a lockfile is a separate deliberate
+operation because package indexes change over time.
 
-15. First implementation milestone
----------------------------------
-
-The first milestone is one complete working project path.
-
-From a fresh copy, an operator can:
-
-1. Understand the project and available commands through make.
-2. Supply or choose explicit local settings and an execution environment.
-3. Acquire missing pinned inputs once.
-4. Build and run meaningful checks offline.
-5. Execute the product under its declared constraints.
-6. Cancel or encounter a normal failure without abandoning owned work.
-7. Finish with disposable resources retired, retained outputs identified,
-   and any unresolved resources reported with useful recovery information.
-
-A focused set of checks accompanies this working path. Establish the
-common boundaries, then add complete components that reuse them.
-
-The common core covers operator interaction, literal settings handoff,
-execution selection, acquisition/offline use, resource ownership,
-deadlines, cleanup, diagnostics, and focused checks.
-
-It should stay small enough to understand. Each additional mechanism
-must earn its place through a selected capability or a demonstrated
-failure mode.
+Sources: [4], [5], [6], [8], [9], [10], [11], [17].
 
 
-Source references
------------------
+6. Give containers only what they need
+-------------------------------------
 
-All repositories below are under github.com/numpde.
-Refs identify the inspected snapshots, not floating latest versions.
-Some source repositories require authenticated access.
+Run project build tools, package managers, and tests in containers.
+Keep host prerequisites small and documented. A host helper needs a
+specific reason, such as selecting Docker or inspecting Linux user IDs.
+
+Start with:
+
+- No network.
+- Read-only source and root filesystem where possible.
+- Explicit writable outputs and limited temporary storage.
+- A user with the minimum required permissions.
+- Dropped Linux capabilities and no privilege escalation.
+- CPU, memory, process, and log limits.
+- No Docker socket, host namespaces, devices, or broad host mounts.
+
+Give network access, a GPU, credentials, or a writable directory only
+to the container that needs it. Tests with a database can use a private
+test network. A local web server should bind only the intended interface.
+
+Do not assume that UID 1000 inside a container is UID 1000 on the host.
+Use the shared identity-mapping helper when private host files require
+it. Keep those files private; do not fix access by making them public
+or changing ownership across an entire directory tree. Service users
+inside containers are a separate choice from host-file ownership.
+
+Check the actual container settings when establishing or changing the
+launcher. Where necessary, check the effective permissions and limits
+inside the container too.
+
+If a platform cannot enforce a required restriction, report that and stop.
+
+To test blocked network access, first establish that the destination
+can be reached from a suitable control container. Otherwise a failed
+connection proves little; report the test as inconclusive.
+
+Sources: [2], [5], [6], [12].
+
+
+7. Finish or stop cleanly
+------------------------
+
+Every command must distinguish resources belonging to its run or selected
+deployment from resources it borrows. Record enough information to find
+what it created, including after an interrupted Docker call.
+
+Delete only resources known to belong to that run or deployment. Never
+infer ownership from a familiar name or an old timestamp. Concurrent
+runs must not collide or delete each other's work.
+
+For temporary resources, cleanup happens in this order:
+
+1. Stop the processes and containers using temporary inputs.
+2. Remove the run's temporary containers, networks, and volumes.
+3. Confirm that removal finished.
+4. Delete the temporary inputs.
+
+Do this on success, failure, and cancellation. Keep the original error
+visible. If the work succeeded but required cleanup failed, report
+failure. Optional maintenance of old caches or images reports its own
+result and may be deferred without failing a successful build.
+
+Keep shared caches, persistent data, configuration, secrets, and requested
+outputs. Give each an explicit removal command when one is needed.
+Routine cleanup must not use global Docker prune.
+
+If a test borrows a database or another repository's fixture, it must not
+destroy it. A command that creates the fixture may remove it after all
+consumers have stopped. Use the same test code in both cases.
+
+Deadlines and uncertain outcomes
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Builds, tests, and maintenance jobs need an overall deadline and time
+to clean up. Nested commands share the remaining time. Retries have a
+limit and apply only to failures that might succeed on another attempt.
+
+Services need bounded startup, individual requests or jobs, and shutdown.
+Their intended running lifetime is separate from those limits.
+
+Killing the Docker client does not prove that a build or container stopped.
+If inspection fails, do not assume the resource has gone. Keep files that
+a surviving process may still need, report what may remain, and provide
+the command or identifiers needed to inspect and recover it.
+
+Exit traps cannot handle SIGKILL or a host crash. If work can outlive the
+command, keep enough ownership information to find and clean it up later.
+Container labels or a small saved record may be enough; a separate record
+is not required for every helper.
+
+Sources: [1], [2], [3], [4], [9], [10], [13].
+
+
+8. Keep checks useful and failures readable
+------------------------------------------
+
+Provide a fast repository-check command. It runs offline in a confined
+container, reads the checkout without changing it, and needs no product
+services, production secrets, model weights, or GPU.
+
+Tests that start services or manage live Docker resources have separate
+commands. The fast checks can test launcher logic without controlling
+the engine.
+
+Check mistakes that matter:
+
+- Make help and dry runs cause no side effects.
+- User values cannot execute code or change Docker options.
+- Commands use the selected engine.
+- Offline commands cannot start downloading.
+- Build inputs exclude private and unrelated files.
+- Dependency files and generated files are consistent.
+- Containers have the intended permissions and writable paths.
+- Temporary resources are cleaned up correctly.
+- Tests do not leave bytecode, caches, or build output in the checkout.
+
+When source folders are added, include them in the appropriate builds
+and checks. Do not let an old file list silently omit new code.
+
+Prefer tests of behavior: accepted input, rejected input, resulting
+effects, and useful error information. Avoid pinning exact private
+wording or checking source spelling when behavior is what matters.
+Use source-layout checks only where the layout itself protects a rule.
+
+A test command or requested selection that finds no tests must fail
+clearly. Offer focused selection through the existing suite, and keep
+whole-suite commands whole.
+
+Show actionable failures at the end, after routine output and cleanup.
+Keep full diagnostics available. Preserve the original failure and
+report cleanup problems separately. Say which tests actually ran.
+
+Testing priorities
+~~~~~~~~~~~~~~~~~~
+
+The first working version includes safe input handling, appropriate
+container permissions, and cleanup. Add focused tests for those rules
+as the relevant code is introduced.
+
+Add database, browser, restart, upgrade, or live-service tests when the
+project needs those features. Test a fix at the level where the defect
+can be reproduced. Run broader tests when the change creates a reason
+to do so.
+
+Do not require exhaustive failure testing, repeated full-suite runs, or
+a new reporting framework before delivering a useful working project.
+Style checks should enforce chosen project rules, not every preference
+found in the source repositories.
+
+Sources: [3], [4], [6], [10].
+
+
+9. Add the tools each project needs
+----------------------------------
+
+A Python package needs packaging and installed-package tests. A frontend
+needs a locked JavaScript toolchain, typechecking, bundle checks, and
+appropriate browser tests. A native program needs a prepared compiler
+and runtime packaging.
+
+A backend adds service configuration, health checks, and shutdown.
+A database adds restricted runtime credentials, separate schema
+administration, migrations, and disposable database tests.
+
+An ML project adds explicit model downloads, file verification, and
+optional GPU access. Pin model code, configuration, tokenizers, and
+preprocessing files as well as weights. Keep ordinary software tests
+independent of large assets where possible.
+
+When repositories run a shared integration test, use each repository's
+supported commands. Exchange the necessary endpoints and identifiers
+explicitly, and agree which process creates and removes each service.
+
+A release workflow checks a concrete package or image, then publishes
+those same bytes with credentials limited to publication.
+
+These additions must follow the same commands, configuration, and cleanup
+rules. Their existence does not require a universal workflow engine or
+a plugin system inside the template.
+
+Sources: [4], [7], [8], [9], [10], [11], [13], [14], [15], [16], [17].
+
+
+10. Keep the tools understandable and maintainable
+-------------------------------------------------
+
+Use pinned releases of suitable shared tools. For copied code, record
+where it came from and how it was changed. Provide a deliberate update
+procedure that preserves the project's own edits.
+
+Group tools by what they do. Add files, directories, flags, and helpers
+when they have a clear purpose. Keep the normal workflow easy to follow;
+put complicated error handling behind small, named functions.
+
+Keep one useful operator guide and short instructions for coding agents.
+Separate current behavior from future plans. CI uses the same Make targets
+and gives publication permissions only to publication jobs.
+
+First build one complete example: explain its commands, choose settings,
+download dependencies, build and test offline, run, and clean up. Then
+add other project types using those same working tools.
+
+Sources: [2], [3], [4], [8].
+
+
+Implementation examples
+-----------------------
+
+These are the versions inspected on 9 November 2026. Some repositories
+require authentication. Use the examples selectively; several contain
+older command names, host-tool assumptions, or other practices that this
+note improves.
 
 [1] conix
-    Ref: 0f5630645223bf048f8fc6236f4d539f8979b713
-    Branch inspected: 20261108-tier0-executable-core
-    Make vocabulary, literal inputs, fixture borrowing and ownership.
-    https://github.com/numpde/conix/blob/0f5630645223bf048f8fc6236f4d539f8979b713/notes/002_make_operator_contract.txt
-    Related files: Makefile; repository_checks/test_make_inputs.py;
-    tools/containers/operator.py; tools/fixtures/pay_to_play.py.
+    Command names, literal Make inputs, and borrowed versus created fixtures.
+    https://github.com/numpde/conix/tree/0f5630645223bf048f8fc6236f4d539f8979b713
+    notes/002_make_operator_contract.txt; repository_checks/test_make_inputs.py;
+    tools/fixtures/pay_to_play.py
 
 [2] container-tools
-    Ref: c337bcecc6f55493fc20cf9ce2a05d5561c399c1
-    Safe Make introspection, checker lifecycle, observed confinement,
-    and reusable Linux identity mapping.
+    Make behavior, container cleanup, and Linux UID/GID mapping.
     https://github.com/numpde/container-tools/tree/c337bcecc6f55493fc20cf9ce2a05d5561c399c1
-    Selected files: Makefile; tools/checker_operation.sh;
-    packages/linux-idmap/README.md;
-    tests/repository/test_container_port_runtime.py.
+    Makefile; tools/checker_operation.sh; packages/linux-idmap/README.md
 
 [3] agent-mail
-    Ref: 34285a1d8a30ba9d1315803bf336838ffda3443e
-    Operator input, selected engine, private client configuration,
-    deployment settings, owned cleanup, failure-last reporting,
-    and maintained source ports.
+    Settings, Docker selection, cleanup, and failures printed last.
     https://github.com/numpde/agent-mail/tree/34285a1d8a30ba9d1315803bf336838ffda3443e
-    Selected files: tools/local_engine.py; tools/repo_operator.py;
-    tools/ops/docker_client.sh; tools/deployment.py;
+    tools/deployment.py; tools/local_engine.py; tools/ops/docker_client.sh;
     tools/ops/checker_operation.sh; tools/repository_test_runner.py;
-    tools/ports/checker.md; notes/038_make_operator_state.txt.
+    tools/ports/checker.md
 
 [4] nmr-provider-tools
-    Ref: b28b7c20b756a342062062e02fbe81b877f3fde2
-    Shared wheelhouse, acquisition owner, selected input streaming,
-    installed-package tests, release identity, retention policy,
-    and the revised capability/assurance gradient.
+    Shared wheelhouse, downloads, package tests, releases, and priorities.
     https://github.com/numpde/nmr-provider-tools/tree/b28b7c20b756a342062062e02fbe81b877f3fde2
-    Selected files: wheelhouse_tool/__main__.py; wheelhouse_tool/stream.py;
-    acquisition_tool/owner.sh; tools/provider_core_tests.py;
-    tools/core_environment.py; tools/publish.sh;
-    notes/030_shared_wheelhouse_design.txt;
-    notes/043_build_cleanup_and_retention.txt;
-    notes/045_isolated_acquisition_workers.txt;
-    notes/066_provider_execution_end_state.txt.
+    wheelhouse_tool/; acquisition_tool/owner.sh; tools/provider_core_tests.py;
+    tools/publish.sh; notes/043_build_cleanup_and_retention.txt;
+    notes/066_provider_execution_end_state.txt
 
 [5] magnet-deploy
-    Ref: fcb9459ca1facd8a6fc18a5acda271549f3a5e6e
-    Named configuration, idempotent initialization, component inputs,
-    observed posture, and explicit qualification limits.
+    Saved deployment settings, selected build files, and container checks.
     https://github.com/numpde/magnet-deploy/tree/fcb9459ca1facd8a6fc18a5acda271549f3a5e6e
-    Selected files: scripts/provider-deployment.sh;
-    scripts/image-build-inputs.sh; config/provider.toml.example;
-    repository_checks/test_container_posture.py;
-    notes/046_acquisition_and_proof_boundaries_20261029.txt.
+    scripts/provider-deployment.sh; scripts/image-build-inputs.sh;
+    repository_checks/test_container_posture.py
 
 [6] nmr-api-v1
-    Ref: 9fe29815a2ddbccae43e98b17817da4ee5d1ec44
-    Canonical settings/secrets, generated-output discipline,
-    dependency groups, private helper identity, and lifecycle handoff.
+    Secrets, generated files, dependency groups, and private host-file access.
     https://github.com/numpde/nmr-api-v1/tree/9fe29815a2ddbccae43e98b17817da4ee5d1ec44
-    Selected files: AGENTS.md; Makefile; tools/container_user.py;
-    tools/coordinator.py; repository_checks/test_dependency_lock.py.
+    AGENTS.md; Makefile; tools/container_user.py;
+    repository_checks/test_dependency_lock.py
 
 [7] traefik-nmr-api
-    Ref: bdc40292872de0d09fd1298e89e252a2157ebd00
-    Literal settings, explicit Compose environment, edge/application
-    ownership, and declared sibling integration.
+    Plain settings parsing and integration between repositories.
     https://github.com/numpde/traefik-nmr-api/tree/bdc40292872de0d09fd1298e89e252a2157ebd00
-    Selected files: tools/env_file.py; tools/compose_environment.py;
-    tools/sibling_integration_contract.py; README.md.
+    tools/env_file.py; tools/compose_environment.py;
+    tools/sibling_integration_contract.py
 
 [8] dapp32
-    Ref: 757180474aa2b74e8ed4db7118320081b0a80899
-    Networked dependency staging, offline application, narrow outputs,
-    operator naming, and scope discipline.
+    Separate download/install steps and restricted writable outputs.
     https://github.com/numpde/dapp32/tree/757180474aa2b74e8ed4db7118320081b0a80899
-    Selected files: AGENTS.md; compose/package-deps.yml;
-    compose/packages.yml; tools/release_process.sh.
+    AGENTS.md; compose/package-deps.yml; compose/packages.yml
 
 [9] fork-of-rindexer
-    Ref: eaa9d08243e64f9f5dd5ad33551676f2647b78fd
-    Branch inspected: master
-    Whole-recipe deadlines, recursive budget sharing, cancellation,
-    offline Rust/Node preparation, and actual runtime artifacts.
+    Whole-job timeouts, cancellation, and offline Rust/Node dependencies.
     https://github.com/numpde/fork-of-rindexer/tree/eaa9d08243e64f9f5dd5ad33551676f2647b78fd
-    Selected files: tools/make-recipe.py; tools/make-timeout.mk;
-    tests/make/test_make_timeouts.py;
-    containers/development/prepare.py; containers/runtime/README.md.
+    tools/make-recipe.py; tools/make-timeout.mk;
+    tests/make/test_make_timeouts.py; containers/development/prepare.py
 
 [10] nmr-gui-v1
-     Ref: 4eb4a690947a3bf30267d31861cd0428605b0ace
-     Frontend artifact testing, isolated browser topology, safe image
-     publication/retention, and limits on brittle validation.
-     https://github.com/numpde/nmr-gui-v1/tree/4eb4a690947a3bf30267d31861cd0428605b0ace
-     Selected files: docker/operations/image_cleanup.py;
-     docker/operations/image-tag-publication.sh;
-     docker/compose/tests.prod-shaped.yml; tests/e2e/README.md;
-     notes/008_authority_proof_test_budget_20260803.txt.
+    Frontend/browser tests, safe image cleanup, and simpler test policies.
+    https://github.com/numpde/nmr-gui-v1/tree/4eb4a690947a3bf30267d31861cd0428605b0ace
+    docker/compose/tests.prod-shaped.yml; tests/e2e/README.md;
+    docker/operations/image_cleanup.py;
+    notes/008_authority_proof_test_budget_20260803.txt
 
 [11] grimace-py
-     Ref: f7f4782ca034cd7d42fdf975903b69efe0c68526
-     Package artifact validation and scoped publication permissions.
-     https://github.com/numpde/grimace-py/blob/f7f4782ca034cd7d42fdf975903b69efe0c68526/.github/workflows/release.yml
-     This is a release-workflow source reference; the template adopts
-     the common containerized execution contract defined above.
+    Checking package contents and limiting publication permissions.
+    https://github.com/numpde/grimace-py/tree/f7f4782ca034cd7d42fdf975903b69efe0c68526
+    .github/workflows/release.yml
 
 [12] llm-systemd
-     Ref: f5486350d90764a96fb171d5c3c08576241127aa
-     Role-specific declared and observed runtime permissions;
-     positive-control network qualification.
-     https://github.com/numpde/llm-systemd/tree/f5486350d90764a96fb171d5c3c08576241127aa
-     Selected files: tools/runtime_policy.py;
-     tools/engine_network_qualify.py; tools/engine_selection.py.
+    Checking running containers and testing network restrictions.
+    https://github.com/numpde/llm-systemd/tree/f5486350d90764a96fb171d5c3c08576241127aa
+    tools/runtime_policy.py; tools/engine_network_qualify.py
 
 [13] pay-to-play
-     Ref: 2a1adb00b2eba9a18b49c92ca39a69ecf59bb110
-     Producer-owned fixture handoff and consumer-before-producer cleanup.
-     https://github.com/numpde/pay-to-play/tree/2a1adb00b2eba9a18b49c92ca39a69ecf59bb110
-     Selected files: tools/ops/local_fixture.py;
-     tools/ops/local_fixture.sh.
+    Shared fixture setup and cleanup in the right order.
+    https://github.com/numpde/pay-to-play/tree/2a1adb00b2eba9a18b49c92ca39a69ecf59bb110
+    tools/ops/local_fixture.py; tools/ops/local_fixture.sh
 
 [14] nmrnet-repro
-     Ref: 2f9b161b4819a23bf61c12a3eb7fd36af2b72035
-     Resumable large-artifact acquisition and bounded selected extraction.
-     https://github.com/numpde/nmrnet-repro/blob/2f9b161b4819a23bf61c12a3eb7fd36af2b72035/tools/artifacts.py
-     The inspected source verifies upstream MD5 and records local
-     SHA-256. This does not establish trusted upstream SHA-256 identity.
+    Resumable downloads and safe, bounded archive extraction.
+    https://github.com/numpde/nmrnet-repro/tree/2f9b161b4819a23bf61c12a3eb7fd36af2b72035
+    tools/artifacts.py
+    Its upstream checksum is MD5; recording a local SHA-256 does not
+    provide a trusted upstream SHA-256.
 
 [15] secs-repro
-     Ref: be5c191be7a4beba2210148b807cb847776639a4
-     Exact model snapshot plus code, tokenizer, and configuration hashes.
-     https://github.com/numpde/secs-repro/tree/be5c191be7a4beba2210148b807cb847776639a4
-     Selected files: molformer.lock.toml;
-     tools/materialize_molformer_cache.py; config/host.toml.example.
+    Pinning model code, configuration, and tokenizer files.
+    https://github.com/numpde/secs-repro/tree/be5c191be7a4beba2210148b807cb847776639a4
+    molformer.lock.toml; tools/materialize_molformer_cache.py
 
 [16] nmrpeak-repro
-     Ref: 96e23534722839cfa06fa7d91f6e95d94ff4b7da
-     Immutable checkpoint declarations and ordinary software tests
-     independent of weights, GPU, credentials, and network.
-     https://github.com/numpde/nmrpeak-repro/tree/96e23534722839cfa06fa7d91f6e95d94ff4b7da
-     Selected files: repository_checks/checkpoint_release.py; README.md.
+    Checkpoint verification and software tests without model weights.
+    https://github.com/numpde/nmrpeak-repro/tree/96e23534722839cfa06fa7d91f6e95d94ff4b7da
+    repository_checks/checkpoint_release.py; README.md
 
 [17] vote-mcp
-     Ref: 092132cc216a26e1a02ac483fbbec54968f26c14
-     Local OCI objects and registry-specific publication separated
-     from artifact identity.
-     https://github.com/numpde/vote-mcp/blob/092132cc216a26e1a02ac483fbbec54968f26c14/notes/322_on_registry_neutral_mcp_release_oci_plan_2026_05_23.txt
+    Building release files before choosing where to publish them.
+    https://github.com/numpde/vote-mcp/tree/092132cc216a26e1a02ac483fbbec54968f26c14
+    notes/322_on_registry_neutral_mcp_release_oci_plan_2026_05_23.txt
 
-The broader collection also inspected proart-llm at
-e2c24eea1d7a547c787682274d838116d238f194. Its workstation-specific
-implementation supplied no stronger general foundation than the selected
-donors above.
