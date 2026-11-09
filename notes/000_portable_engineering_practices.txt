@@ -714,118 +714,167 @@ preferences.
 Sources: [3], [4], [6], [10].
 
 
-C5. Source layout, names, and explanations
------------------------------------------
+C5. Python style: make the reasoning easy to follow
+--------------------------------------------------
 
-Use these conventions for Python source.
-The broader rules about grouping, names, and explanations apply to other languages too.
+Make the code easy to read, not merely easy to scan.
+Its layout should show what is known, what is observed, what is checked,
+and what happens next. Use explicit, economical Python with deliberate
+whitespace and minimal, substantive commentary.
 
-Group statements by meaning
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+These are the conventions consolidated on 9 November 2026.
+They take precedence over differing historical examples in [19].
+The broader principles about grouping, names, and explanations also apply
+to other languages.
 
-Keep statements together when they form one reading step.
-Related assignments, a prompt and its flush, helper preparation, and a phase label
-with its operation belong together. Use blank lines between distinct checks,
-operations, reporting, and returns.
+Structure and whitespace follow meaning
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-    installation_phase = "enabling and starting the engine"
-    activate_engine(account)
+Separate preparation, observation, validation, mutation, and reporting
+when they are distinct steps. Keep related operations together.
+Related simple assignments, a prompt and its flush, and a phase label
+with its operation usually form one group.
 
-    installation_phase = "registering the Docker context"
-    register_context(account, engine_endpoint)
+Give a complex multiline statement breathing room before and after it.
+Its subsequent validation is a separate step.
+Do not insert blank lines mechanically between every statement.
 
-Do not put a blank line after every statement.
-The early llm-systemd spacing pass did that too broadly; a later commit corrected it.
-Carry forward the correction.
+Name the facts and operations
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Keep simple calls, raises, and other expressions on one line when they read comfortably.
-Use multiple lines when the length or structure benefits from grouping.
-Related arguments can share a line; one argument per line is not a universal rule.
+Use names that identify a value's role, especially observed and expected state.
 
-    file_installation = as_user(
-        account, "/usr/bin/python3", helper, destination, f"{mode:04o}",
-        content=content, capture=True,
+    expected_chain_id = deployment.chain_id
+    actual_chain_id = quantity(await self.rpc.call("eth_chainId", []), "chain ID")
+
+    if actual_chain_id != expected_chain_id:
+        raise ObservationProtocolError(f"{actual_chain_id = }, {expected_chain_id = }")
+
+Prefer account_number to answer and engine_storage to storage when those
+distinctions help the reader. Name captured outputs after their operations:
+file_installation, context_listing, and context_inspection.
+Do not add an intermediate variable that merely relays a value without
+giving it a useful name or separating a meaningful step.
+
+Observe a value once and use that observation in the decision and diagnostic.
+Use an assignment expression only when binding in the condition makes
+the reasoning clearer. Do not use := merely to save a line.
+Explicit assignments make observed and expected values easy to compare.
+
+Keep simple expressions compact; give multiline calls a consistent form
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Keep a simple call or raise on one line when it reads comfortably.
+Avoid unnecessary intermediate variables, nested multiline calls, and
+parameter expansion that adds no clarity.
+
+For a genuinely multiline call, use keyword arguments, one per line,
+where the existing signature permits. Keep required positional-only or
+variadic arguments compatible with the callable. Do not change an interface
+or add a wrapper solely to satisfy a formatting convention.
+
+Keep a nested await expression together in parentheses, as below.
+There is no need to spread the inner call across more lines or give its
+reply a temporary name merely to pass it to the outer call.
+
+    contract_address = deployment.address
+
+    contract_code = data(
+        value=(await self.rpc.call("eth_getCode", [contract_address, "latest"])),
+        label="contract code",
+        size=None,
     )
 
-Choose useful names and bindings
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    if not contract_code:
+        raise ObservationProtocolError(f"No contract code at {contract_address = }")
 
-Name a value after the fact or operation it represents.
-Prefer account_number to answer, engine_storage to storage, and installation_phase
-to phase when those distinctions matter. Distinguish context_endpoint from
-engine_endpoint. Name captured outputs file_installation, context_listing, or
-context_inspection rather than result or context.
+The choice between one line and several follows readability.
+Neither compactness nor expansion is inherently preferable.
+No fixed numerical line limit is established by this note.
 
-Use an assignment expression when a condition tests a value that its branch needs.
-Keep a separate assignment when construction or effect ordering deserves its own step.
-Do not repeat an observation just to print it; report the value used in the decision.
-
-    if (context_endpoint := context_inspection.stdout.strip()) != engine_endpoint:
-        raise ValueError(f"{context_endpoint = } differs from {engine_endpoint = }")
-
-Parenthesize tuple-unpacking targets, including loops and comprehensions.
+Keep the explicit tuple-unpacking convention, including loop and
+comprehension targets.
 
     for (number, account) in enumerate(choices, 1):
         ...
 
     (destination, file_mode) = (arguments.destination, arguments.file_mode)
 
-Write direct, factual diagnostics
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Make diagnostics factual and concise
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Use spaced debug f-strings for named diagnostic values.
-Apply A8's redaction and audience restrictions before emitting those values.
-Choose names that explain the values to the reader; avoid exposing incidental field
-expressions such as account.pw_name or exc.returncode as the diagnostic labels.
+Prefer spaced debug f-strings for named, nonsecret values.
+Choose useful names before rendering them: actual_chain_id and
+expected_chain_id explain a comparison without generic mismatch prose.
+Keep path conversion and numeric formats appropriate to the value.
 
     f"{service_user = }"
     f"{account_home = !s} is not a directory"
     f"Reused {destination = !s}; applied {file_mode = :04o}"
 
-Keep readable path conversion and appropriate numeric formats.
-Command arguments, generated configuration, and menu numbering keep their required
-formats. This convention does not apply to every interpolation.
+Apply A8's redaction and audience restrictions before emitting values.
+Command arguments, generated configuration, and menu numbering keep their
+required formats; debug notation is a diagnostic convention.
 
-State the failed condition directly, with useful observed and required values.
-Remove repeated labels, obvious repair advice, and duplicated local rollback prose.
-Keep the cause, relevant next action, and meaningful partial-effect information at
-the boundary that can explain them; concision must not discard the A8 requirements.
-Report what is known: an OSError during account selection does not establish that
-no terminal exists. A saved file or a running engine remains an effect to report.
+State the failed condition and useful actual and expected state directly.
+Remove padding, repeated labels, and duplicated rollback prose.
+Keep the cause, relevant next action, known or uncertain effects, and
+meaningful partial-effect information where the caller can receive them.
+Concision must not discard the A8 error-propagation requirements.
+For example, an OSError during account selection does not establish that
+no terminal exists; report the actual observed failure.
 
-Explain the code where its responsibilities live
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Write useful comments and docstrings in plain English
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-A useful module introduction explains its role and its relationship to callers.
-At important boundaries, explain the inputs, identity, results, ordering, side
-effects, and recovery responsibilities that a caller needs to know.
-Comments explain non-obvious reasons or constraints; docstrings do more than
-repeat the function name. Do not add a ritual checklist to every small function.
+Explain invariants, ownership, trust boundaries, ordering constraints,
+and failure consequences when they matter to understanding or using the code.
+Place the explanation at the module or function that owns the responsibility.
+A module introduction can explain its role and its relationship to callers.
+Do not restate the code or add docstrings to trivial functions.
 
-Keep prose in coherent sentences and paragraphs.
-Break at sentence or sensible clause boundaries instead of leaving isolated words
-on a new line. Separate topics, such as normal behavior and retained partial writes.
-Preserve that paragraph structure when reusing the prose in command help.
+Write coherent sentences and paragraphs.
+Break at sentence or sensible clause boundaries instead of leaving isolated
+words on a new line. Separate topics such as normal behavior and recovery.
+Preserve the paragraph structure when reusing the prose in command help.
 
-Put substantial executable helpers in ordinary source files with typed functions
-and small entry points. Readers should be able to navigate and inspect their effects.
-Avoid hiding a second program in a multiline string passed to python -c.
-Keep transport or staging in the caller and the helper's actual job in the helper.
-Use a named parser when validation and useful diagnostics warrant one; simple sorting
-lambdas remain suitable.
+Put substantial executable helpers in ordinary source files with typed
+functions and small entry points. Keep their effects open to navigation
+and inspection instead of hiding a second program in a string passed to
+python -c. Keep transport or staging in the caller and the helper's actual
+job in the helper. Use a named parser when validation and useful diagnostics
+warrant one; simple sorting lambdas remain suitable.
 
-Review these choices; check only explicit syntax rules mechanically
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Preserve behavior during style revisions
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-These conventions are contributor expectations, even when they require judgment.
-A checker can enforce a selected syntax convention, such as parenthesized unpacking.
-It cannot decide whether statements form one step, a name is informative, or a
-comment explains the right thing. No style checker is implemented by this note.
-Choose any later formatter or checker to preserve these conventions.
-This source history establishes neither a fixed numerical line limit nor mandatory
-use of assignment expressions everywhere.
+Preserve algorithms, evaluation order and frequency, error propagation,
+security boundaries, and public interfaces.
+Renaming a local variable does not authorize renaming a public parameter
+that callers may supply by keyword. Do not move effects across a guard
+or repeat an observation while introducing clearer names.
 
-Source: [19].
+After renaming or rearranging code, read the complete function, including
+uncommon error, cancellation, and cleanup paths.
+Check that each name is bound where it is used and still denotes the
+intended value. Review existing callers when the change could affect them.
+Keep any necessary behavior correction explicit and separate from a
+style-only change.
+
+Review meaning; check explicit syntax rules mechanically
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+These conventions are contributor expectations, even when they need judgment.
+A checker can enforce a chosen syntax rule, such as parenthesized unpacking
+or one keyword per line in a multiline call.
+It cannot decide whether statements form one step, names explain their roles,
+or commentary supplies useful information.
+Choose any later formatter or checker to preserve these conventions;
+mechanical compliance does not establish readability.
+No style checker is implemented by this note.
+
+Basis: the consolidated project conventions of 9 November 2026, informed
+by the historical examples in [19].
 
 
 First implementation and decisions still to make
@@ -1018,7 +1067,8 @@ note improves.
 [19] llm-systemd, early source-style revisions on 5 November 2026
     Logical grouping, compact expressions, precise names, diagnostic values,
     tuple unpacking, conditional bindings, useful comments, and readable prose.
-    Final files inspected:
+    Historical files inspected; C5's consolidated conventions take precedence
+    where they differ from these earlier examples.
     https://github.com/numpde/llm-systemd/tree/c385a2b424699a6467c295915bfe47efbde52c84
     tools/llm.py; tools/install_file.py
 
