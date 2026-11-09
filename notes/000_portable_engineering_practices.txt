@@ -368,8 +368,9 @@ clearly. Offer focused selection through the existing suite, and keep
 whole-suite commands whole.
 
 Show actionable failures at the end, after routine output and cleanup.
-Keep full diagnostics available. Preserve the original failure and
-report cleanup problems separately. Say which tests actually ran.
+Keep useful, redacted diagnostics available. Preserve the original failure
+and report cleanup problems separately. Say which tests actually ran.
+Section 12 gives the error-reporting rules for the whole project.
 
 Testing priorities
 ~~~~~~~~~~~~~~~~~~
@@ -489,6 +490,129 @@ and what remains unfinished.
 Sources: [1], [3], [6], [8], [9].
 
 
+12. Explain failures and preserve their causes
+----------------------------------------------
+
+Show the most useful available explanation of a failure, with sensitive
+material removed. Apply this throughout: startup, configuration, builds,
+tests, scientific workers, services, APIs, clients, and background work.
+
+Carry the cause to the caller
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Catch errors narrowly enough to know what failed. Keep the original cause
+when adding context. An unexpected programming, storage, or transport
+failure must not become "invalid input", an empty result, or success.
+At an API boundary, distinguish deliberate validation failures from
+unexpected exceptions. ValueError or TypeError alone does not prove that
+the caller supplied bad input.
+
+Keep caller cancellation, a dependency's timeout, and the caller's deadline
+distinct. Caller cancellation remains cancellation after bounded cleanup;
+retain independent failures and identify any work whose stopping remains
+unconfirmed.
+
+Give machine callers stable error codes and people useful explanations.
+Preserve both through wrappers and protocol conversions. Clients must not
+have to parse prose or guess the cause from an HTTP status. An unfamiliar
+code must not make its accompanying explanation disappear.
+
+Keep useful exception messages, causal relationships, and stack locations
+available to the appropriate recipient. Preserving a Python cause is not
+enough if the final CLI or GUI prints only "failed". Across processes,
+carry the operation, phase, and request or job identifier with the error.
+
+Shell, Make, and subprocess wrappers must report a failed command as failed
+and preserve its useful stderr. Include the original exit code or signal
+when it helps explain the failure. Pipelines, logging, or cleanup must not
+turn failure into exit status zero. A continuing service may handle a
+failed job and remain healthy; it must still report that job's failure
+to its caller.
+
+Say what happened and what is still unknown
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+An error should explain, where applicable:
+
+- Which operation and component failed.
+- The actual reason, including a useful field, location, rejected value,
+  expected value, or system error.
+- What completed, what did not start, and what may still be running.
+- What is known about saved changes, results, and delivery.
+- What the caller can reasonably do next.
+
+A request ID helps locate the evidence; it must not replace an explanation
+already available. Attribute a model's or remote endpoint's explanation
+to that producer. If it has not been verified, say so without throwing it
+away. Do not promote an older, familiar cause into the primary diagnosis
+merely because the current failure is unfamiliar.
+
+Distinguish a rejected request from a lost or malformed reply after work
+started. A timeout does not prove that a write failed, a worker stopped,
+or a result was not accepted. Recommend or perform a retry only when the
+failure is retryable and repeating the operation is safe.
+
+Keep the primary failure separate from secondary failures in cleanup,
+logging, diagnostic storage, and error-report delivery. Preserve all useful
+reasons and continue independent required cleanup. A failure while printing
+an error must not erase it or release ownership of still-running work.
+
+If a response has started or may have started, do not send a replacement
+unless the protocol explicitly supports it. Improved diagnostics must not
+rewrite an already accepted result or a saved command awaiting exact replay.
+
+Remove sensitive material without losing the explanation
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Remove credentials, private keys, passwords, tokens, cookies, signed
+access URLs, and other material known to be confidential in that context.
+Give the redactor the configured secret values at the boundary that knows
+them. Pattern matching alone cannot identify every secret.
+
+Scientific input, an offending scalar, a useful path, and an external
+component's message are not automatically secret. Show relevant excerpts
+to recipients entitled to see them. Avoid dumping entire jobs, results,
+environments, headers, conversations, or traceback locals.
+
+Some facts need a narrower audience. For example, an authorization refusal
+may need to conceal whether a private resource exists. Keep the useful
+protected reason available to authorized operators, linked to the public
+error. Make each restriction specific; do not hide every unexpected
+exception merely because some errors contain secrets.
+
+Redact before truncating, including escaped forms of known secrets, so
+clipping cannot expose a secret prefix. Then render as literal text,
+handle terminal controls or markup, and bound its size. Preserve the
+useful cause when shortening a diagnostic and say what was omitted.
+Escaping and truncation do not remove secrets.
+
+Keep diagnostics that must survive cleanup or restart in a bounded,
+protected location. Document how to inspect them and when they are removed.
+Only direct the user to evidence that was actually retained.
+Diagnostic retention is separate from the lifetime of temporary work.
+
+Check the report the caller actually receives
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+For each reporting path being changed, test a distinctive cause through
+to its actual CLI output, API response, UI, or stored failure report.
+Check the reason, context, effects, failure status, and useful next step.
+Include an unexpected defect and a secondary cleanup or reporting failure
+where those paths exist.
+
+Put synthetic secrets inside otherwise useful messages: the secret must
+disappear while the explanation survives, including near size limits.
+Check behavior and diagnostic meaning rather than exact prose. Use focused
+tests and useful repository checks; this does not require a new error
+framework or an exhaustive failure campaign before useful work can ship.
+
+Some reviewed renderers still hide unfamiliar exception messages. This
+falls short of the transparency rule above; retain their useful mechanisms
+and replace blanket suppression with specific redaction.
+
+Sources: [5], [6], [7], [10], [14], [15], [16], [18].
+
+
 Implementation examples
 -----------------------
 
@@ -525,22 +649,29 @@ note improves.
     notes/066_provider_execution_end_state.txt
 
 [5] magnet-deploy
-    Saved deployment settings, selected build files, and container checks.
+    Deployment settings, build files, container checks, and worker failures.
     https://github.com/numpde/magnet-deploy/tree/fcb9459ca1facd8a6fc18a5acda271549f3a5e6e
     scripts/provider-deployment.sh; scripts/image-build-inputs.sh;
-    repository_checks/test_container_posture.py
+    repository_checks/test_container_posture.py;
+    models/g_01_nmr_forward/runner/serving_worker.py;
+    models/g_01_nmr_forward/runner/test_serving_worker.py
 
 [6] nmr-api-v1
-    Secrets, generated files, dependency groups, and private host-file access.
+    Secrets, generated files, private file access, and useful API errors.
     https://github.com/numpde/nmr-api-v1/tree/9fe29815a2ddbccae43e98b17817da4ee5d1ec44
     AGENTS.md; Makefile; tools/container_user.py;
-    repository_checks/test_dependency_lock.py
+    repository_checks/test_dependency_lock.py;
+    notes/123_repository_wide_error_transparency_20260911.txt;
+    nmr_api/problem_mapping.py; nmr_api/security/problems.py;
+    tests/repo-checks/test_error_transparency.py;
+    tests/unit/adversarial/test_problem_details.py
 
 [7] traefik-nmr-api
-    Plain settings parsing and integration between repositories.
+    Settings, integration, and command errors with causes and effects.
     https://github.com/numpde/traefik-nmr-api/tree/bdc40292872de0d09fd1298e89e252a2157ebd00
     tools/env_file.py; tools/compose_environment.py;
-    tools/sibling_integration_contract.py
+    tools/sibling_integration_contract.py; tools/cli_errors.py;
+    checks/repo_contracts.py
 
 [8] dapp32
     Separate download/install steps and restricted writable outputs.
@@ -554,11 +685,14 @@ note improves.
     tests/make/test_make_timeouts.py; containers/development/prepare.py
 
 [10] nmr-gui-v1
-    Frontend/browser tests, safe image cleanup, and simpler test policies.
+    Frontend tests, image cleanup, error display, and diagnostic redaction.
     https://github.com/numpde/nmr-gui-v1/tree/4eb4a690947a3bf30267d31861cd0428605b0ace
     docker/compose/tests.prod-shaped.yml; tests/e2e/README.md;
     docker/operations/image_cleanup.py;
-    notes/008_authority_proof_test_budget_20260803.txt
+    notes/008_authority_proof_test_budget_20260803.txt;
+    app/src/api/problem-response.ts; app/src/diagnostics/redaction.ts;
+    tests/unit/normative/signed-fetch-transport.test.ts;
+    tests/unit/normative/redaction.test.ts
 
 [11] grimace-py
     Checking package contents and limiting publication permissions.
@@ -576,24 +710,38 @@ note improves.
     tools/ops/local_fixture.py; tools/ops/local_fixture.sh
 
 [14] nmrnet-repro
-    Resumable downloads and safe, bounded archive extraction.
+    Downloads, archive extraction, and retained scientific failure causes.
     https://github.com/numpde/nmrnet-repro/tree/2f9b161b4819a23bf61c12a3eb7fd36af2b72035
-    tools/artifacts.py
+    tools/artifacts.py; nmrnet_provider/process_reports.py;
+    nmrnet_provider/worker_client.py;
+    tests/integration/provider_core/normative/test_nmrnet_reports.py;
+    tests/integration/provider_core/adversarial/test_nmrnet_process.py
     Its upstream checksum is MD5; recording a local SHA-256 does not
     provide a trusted upstream SHA-256.
 
 [15] secs-repro
-    Pinning model code, configuration, and tokenizer files.
+    Pinned model files and precise classification of model failures.
     https://github.com/numpde/secs-repro/tree/be5c191be7a4beba2210148b807cb847776639a4
-    molformer.lock.toml; tools/materialize_molformer_cache.py
+    molformer.lock.toml; tools/materialize_molformer_cache.py;
+    src/secs_inference/model.py;
+    tests/integration/test_model_forward_failure.py
 
 [16] nmrpeak-repro
-    Checkpoint verification and software tests without model weights.
+    Checkpoints, lightweight tests, and maximum useful error transparency.
     https://github.com/numpde/nmrpeak-repro/tree/96e23534722839cfa06fa7d91f6e95d94ff4b7da
-    repository_checks/checkpoint_release.py; README.md
+    repository_checks/checkpoint_release.py; README.md;
+    notes/006_maximum_error_transparency_20261014.txt;
+    nmrpeak_provider/diagnostic_text.py; families/nmrpeak/runner_worker.py;
+    tests/unit/test_runner_failure_diagnostics.py;
+    tests/unit/test_diagnostic_text.py; tests/unit/test_provider_diagnostics.py
 
 [17] vote-mcp
     Building release files before choosing where to publish them.
     https://github.com/numpde/vote-mcp/tree/092132cc216a26e1a02ac483fbbec54968f26c14
     notes/322_on_registry_neutral_mcp_release_oci_plan_2026_05_23.txt
 
+[18] nmr-provider-tools, additional error-propagation review
+    Primary failures, cleanup, interruption, and delivery kept distinct.
+    https://github.com/numpde/nmr-provider-tools/tree/4f86b60f97a14fa49a3075c3626d6826afc93da9
+    packages/provider-core/src/provider_core/execution.py;
+    packages/provider-core/tests/unit/adversarial/test_execution.py
