@@ -184,6 +184,10 @@ def public_mounts(root: Path) -> list[str]:
         mode = entry.lstat().st_mode
         if not (stat.S_ISREG(mode) or stat.S_ISDIR(mode)):
             raise OperationError(f"Refusing link or non-file source: {entry}")
+        if (stat.S_ISDIR(mode) and mode & 0o005 != 0o005) or (
+            stat.S_ISREG(mode) and mode & 0o004 != 0o004
+        ):
+            raise OperationError(f"Checker cannot read non-public source: {entry}")
         arguments.extend(["--mount", f"type=bind,source={entry},target=/workspace/{name},readonly"])
     for name in ("Makefile", "tools", "tests"):
         if name not in discovered:
@@ -269,6 +273,62 @@ class Docker:
         if identity != IMAGE_ID:
             raise OperationError(f"Pinned checker image configuration differs: {identity!r}")
         return identity
+
+
+def verify_container_posture(docker: Docker, identifier: str, root: Path) -> None:
+    """Require the engine's created container to retain the requested grants."""
+    raw = checked_result(
+        docker.call("container", "inspect", "--format", "{{json .}}", identifier),
+        "Checker confinement inspection",
+    )
+    try:
+        description = json.loads(raw)
+        host = description["HostConfig"]
+        config = description["Config"]
+        mounts = description["Mounts"]
+    except (KeyError, TypeError, ValueError) as error:
+        raise OperationError("Docker returned malformed checker confinement data") from error
+    if not isinstance(host, dict) or not isinstance(config, dict) or not isinstance(mounts, list):
+        raise OperationError("Docker returned malformed checker confinement types")
+    failures = []
+    expected = {
+        "NetworkMode": "none", "ReadonlyRootfs": True, "Privileged": False,
+        "NanoCpus": 2_000_000_000, "Memory": 536_870_912,
+        "MemorySwap": 536_870_912, "PidsLimit": 64,
+    }
+    for field, value in expected.items():
+        if host.get(field) != value:
+            failures.append(field)
+    if config.get("User") != "65532:65532":
+        failures.append("user")
+    if not isinstance(host.get("CapDrop"), list) or "all" not in (
+        value.lower() for value in host["CapDrop"] if isinstance(value, str)
+    ):
+        failures.append("capabilities")
+    if not isinstance(host.get("SecurityOpt"), list) or "no-new-privileges:true" not in host["SecurityOpt"]:
+        failures.append("no-new-privileges")
+    logging = host.get("LogConfig")
+    if not isinstance(logging, dict) or logging.get("Type") != "none":
+        failures.append("logging")
+    temporary = host.get("Tmpfs")
+    if not isinstance(temporary, dict) or not isinstance(temporary.get("/tmp"), str) or not {
+        "rw", "nosuid", "nodev", "noexec", "size=67108864"
+    }.issubset(set(temporary["/tmp"].split(","))):
+        failures.append("temporary storage")
+    expected_mounts = {
+        (str(root / name), f"/workspace/{name}")
+        for name in PUBLIC_ROOTS if (root / name).exists()
+    }
+    actual_mounts = set()
+    for mount in mounts:
+        if not isinstance(mount, dict) or mount.get("Type") != "bind" or mount.get("RW") is not False:
+            failures.append("source mount type or writable permission")
+            continue
+        actual_mounts.add((mount.get("Source"), mount.get("Destination")))
+    if actual_mounts != expected_mounts:
+        failures.append("source mount inventory")
+    if failures:
+        raise OperationError(f"Docker did not apply required checker confinement: {', '.join(failures)}")
 
 
 def container_ids(raw: str) -> list[str]:
@@ -401,6 +461,7 @@ def operate(action: str, environ: dict[str, str], executor: Executor | None = No
             if observed != [identifier]:
                 raise OperationError("Docker created an unexpected container identity")
             create_confirmed = True
+            verify_container_posture(docker, identifier, root)
             result = docker.call("start", "--attach", identifier, timeout=WORK_TIMEOUT)
             check_output = result.output
             if result.truncated:

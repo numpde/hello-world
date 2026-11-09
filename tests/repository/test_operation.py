@@ -37,6 +37,8 @@ class FakeExecutor:
         self.work_timeout = False
         self.cancel_start = False
         self.bad_exit_state = False
+        self.bad_confinement = False
+        self.mounts = []
         self.source_output = "Ran 17 tests in 0.12s\n\nOK\n"
         self.engine = ENGINE.copy()
         self.endpoint = ENDPOINT
@@ -63,6 +65,14 @@ class FakeExecutor:
             )
             cidfile.write_text(IDENTIFIER + "\n", encoding="ascii")
             self.present = True
+            self.mounts = [
+                {
+                    "Type": "bind", "RW": False,
+                    "Source": part.split("source=", 1)[1].split(",target=", 1)[0],
+                    "Destination": part.split("target=", 1)[1].split(",readonly", 1)[0],
+                }
+                for part in args if part.startswith("type=bind,")
+            ]
             return checker.Result(0, IDENTIFIER + "\n")
         if args[:1] == ["ps"]:
             return checker.Result(0, IDENTIFIER + "\n" if self.present else "")
@@ -75,7 +85,21 @@ class FakeExecutor:
             labels = self.labels.copy()
             if self.malformed_ownership:
                 labels[checker.IDENTITY_LABEL] = "not-our-operation"
-            return checker.Result(0, json.dumps({"Id": IDENTIFIER, "Image": checker.IMAGE_ID, "Config": {"Labels": labels}}))
+            host = {
+                "NetworkMode": "none", "ReadonlyRootfs": True, "Privileged": False,
+                "NanoCpus": 2_000_000_000, "Memory": 536_870_912,
+                "MemorySwap": 536_870_912, "PidsLimit": 64,
+                "CapDrop": ["ALL"], "SecurityOpt": ["no-new-privileges:true"],
+                "LogConfig": {"Type": "none"},
+                "Tmpfs": {"/tmp": "rw,nosuid,nodev,noexec,size=67108864"},
+            }
+            if self.bad_confinement:
+                host["NetworkMode"] = "bridge"
+            return checker.Result(0, json.dumps({
+                "Id": IDENTIFIER, "Image": checker.IMAGE_ID,
+                "Config": {"Labels": labels, "User": "65532:65532"},
+                "HostConfig": host, "Mounts": self.mounts,
+            }))
         if args[:1] == ["start"]:
             if self.cancel_start:
                 raise checker.Cancelled("caller interrupted work")
@@ -176,6 +200,22 @@ class OperationContracts(unittest.TestCase):
         status, _, errors = self.execute()
         self.assertEqual(status, 1)
         self.assertIn("attachment timed out", errors)
+        self.assertFalse(self.executor.present)
+
+    def test_engine_that_ignores_confinement_cannot_start_checker(self):
+        self.executor.bad_confinement = True
+        status, _, errors = self.execute()
+        self.assertEqual(status, 1)
+        self.assertIn("NetworkMode", errors)
+        self.assertFalse(self.executor.present)
+        self.assertFalse(any("start" in args for args, _, _ in self.executor.calls))
+
+    def test_public_root_file_permissions_are_checked(self):
+        source = self.root / "Makefile"
+        source.chmod(0o600)
+        self.addCleanup(lambda: source.chmod(0o644))
+        with self.assertRaisesRegex(checker.OperationError, "non-public"):
+            self.execute()
         self.assertFalse(self.executor.present)
 
     def test_cancellation_removes_owned_container(self):
