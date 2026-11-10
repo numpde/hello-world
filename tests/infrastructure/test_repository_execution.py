@@ -349,7 +349,7 @@ class RepositoryContainerContracts(unittest.TestCase):
         """Do not run when the selected daemon cannot meet the declared security and resource requirements."""
         for changed in ({"SecurityOptions": []}, {"CgroupVersion": "1"}, {"Architecture": "arm64"}):
             with self.subTest(changed=changed):
-                self.executor.engine_information = ENGINE | changed
+                self.executor.engine_information = FAKE_ENGINE_INFORMATION | changed
                 with self.assertRaises(docker_client.OperationError):
                     self.execute()
                 self.assertFalse(self.executor.container_present)
