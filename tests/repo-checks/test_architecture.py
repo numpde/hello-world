@@ -51,10 +51,28 @@ class ArchitectureContracts(unittest.TestCase):
 
     def test_repository_command_discovers_both_test_areas(self):
         self.assertEqual(repository.UNITTEST_DISCOVERY_ARGS[:4], ("-s", "tests", "-t", "."))
-        for folder in ("tests/repository", "tests/infrastructure"):
+        for folder in ("tests/repo-checks", "tests/infrastructure"):
             with self.subTest(folder=folder):
                 self.assertTrue((ROOT / folder / "__init__.py").is_file())
                 self.assertTrue(any((ROOT / folder).glob("test_*.py")))
+
+    def test_discovery_includes_hyphenated_repo_checks(self):
+        discovered = unittest.TestLoader().discover(
+            start_dir=str(ROOT / "tests"),
+            top_level_dir=str(ROOT),
+            pattern="test_*.py",
+        )
+
+        def test_ids(suite):
+            for candidate in suite:
+                if isinstance(candidate, unittest.TestSuite):
+                    yield from test_ids(candidate)
+                else:
+                    yield candidate.id()
+
+        collected = tuple(test_ids(discovered))
+        self.assertTrue(any(name.startswith("tests.repo-checks.") for name in collected))
+        self.assertTrue(any(name.startswith("tests.infrastructure.") for name in collected))
 
 
 if __name__ == "__main__":

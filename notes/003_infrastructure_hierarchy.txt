@@ -37,8 +37,9 @@ Long-term hierarchy, now
             __init__.py
             test_repository_execution.py   # mocked end-to-end Docker/command contract
             test_unittest_runner.py        # test-framework results and failure-last
-        repository/
+        repo-checks/
             __init__.py
+            test_architecture.py    # dependency direction and discovery
             test_make.py            # Make's public contract
     notes/
         000_...
@@ -99,8 +100,10 @@ Branch and tests policy
 
 main owns all the infrastructure above; example/* branches contain actual
 applications and configuration, without copies or overrides of common
-machinery. Discovery starts at tests/ rather than tests/repository/ so
-contracts placed in tests/infrastructure/ are not silently skipped.
+machinery. Discovery starts at tests/, covering repo-checks/ and
+infrastructure/ so neither kind of contract is silently skipped. The
+hyphenated repo-checks/ directory remains a package for unittest discovery;
+its discovery must be tested instead of assumed.
 An empty suite is a failure. Installed-package and live-engine qualification
 remain separate from fast source and mocked-boundary checks.
 
