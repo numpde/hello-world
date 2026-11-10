@@ -269,24 +269,37 @@ def verify_container_posture(
     observed_tmp_options = observed_tmpfs_configuration.get("/tmp") if isinstance(observed_tmpfs_configuration, dict) else None
     expected_tmp_options = set(TMPFS_OPTIONS)
 
+    if not isinstance(observed_tmpfs_configuration, dict) or set(observed_tmpfs_configuration) != {"/tmp"}:
+        confinement_findings.append(f"Unexpected {observed_tmpfs_configuration = }")
+
     # Allow Docker to reorder options, but not to add contradictory permissions
     # or a second size declaration.
     if not isinstance(observed_tmp_options, str) or set(observed_tmp_options.split(",")) != expected_tmp_options:
         confinement_findings.append(f"{observed_tmp_options = }, {expected_tmp_options = }")
 
-    # Compare the daemon's complete mount list, not just the requested binds.
-    # An additional read-only mount is still a grant this job did not request.
+    # Docker may also include --tmpfs /tmp in Mounts. Other mounts, including
+    # additional read-only binds, are unrequested grants.
     expected_bind_mounts = {(str(mount.source), mount.target) for mount in job.mounts}
     observed_bind_mounts = set()
 
     for observed_mount in observed_container_mounts:
-        if (
-            not isinstance(observed_mount, dict)
-            or observed_mount.get("Type") != "bind"
-            or observed_mount.get("RW") is not False
-        ):
+        if not isinstance(observed_mount, dict):
+            confinement_findings.append(f"Unexpected {observed_mount = }")
+            continue
+
+        if observed_mount.get("Type") == "tmpfs":
+            if (
+                observed_mount.get("Destination") != "/tmp"
+                or observed_mount.get("RW") is not True
+                or observed_mount.get("Source") not in ("", None)
+            ):
+                confinement_findings.append(f"Unexpected {observed_mount = }")
+            continue
+
+        if observed_mount.get("Type") != "bind" or observed_mount.get("RW") is not False:
             confinement_findings.append(f"Unexpected writable or non-bind {observed_mount = }")
             continue
+
         observed_bind_mounts.add((observed_mount.get("Source"), observed_mount.get("Destination")))
 
     if observed_bind_mounts != expected_bind_mounts:

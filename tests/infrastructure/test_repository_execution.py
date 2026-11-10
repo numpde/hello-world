@@ -55,6 +55,7 @@ class FakeExecutor:
         self.bad_exit_state = False
         self.host_configuration_overrides = {}
         self.container_mounts = []
+        self.observed_additional_mounts = []
         self.workload_output = "Ran 17 tests in 0.12s\n\nOK\n"
         self.engine_information = FAKE_ENGINE_INFORMATION.copy()
         self.engine_endpoint = FAKE_ENGINE_ENDPOINT
@@ -119,7 +120,8 @@ class FakeExecutor:
             return docker_client.Result(0, json.dumps({
                 "Id": FAKE_CONTAINER_ID, "Image": repository.CHECKER_IMAGE_ID,
                 "Config": {"Labels": container_labels, "User": "65532:65532"},
-                "HostConfig": host_configuration, "Mounts": self.container_mounts,
+                "HostConfig": host_configuration,
+                "Mounts": [*self.container_mounts, *self.observed_additional_mounts],
             }))
         if docker_arguments[:1] == ["start"]:
             if self.cancel_start:
@@ -364,6 +366,34 @@ class RepositoryContainerContracts(unittest.TestCase):
 
         self.assertEqual(operation_status, 0, errors)
         self.assertFalse(self.executor.container_present)
+
+    def test_expected_tmpfs_mount_can_appear_in_inspection(self):
+        """Docker may report the admitted /tmp tmpfs alongside the read-only binds."""
+        self.executor.observed_additional_mounts = [
+            {"Type": "tmpfs", "Source": "", "Destination": "/tmp", "RW": True},
+        ]
+
+        (operation_status, _, errors) = self.execute()
+
+        self.assertEqual(operation_status, 0, errors)
+        self.assertFalse(self.executor.container_present)
+
+    def test_unrequested_tmpfs_storage_is_rejected(self):
+        """An additional tmpfs grant cannot be hidden in either inspect field."""
+        extra_tmpfs_mount = {"Type": "tmpfs", "Source": "", "Destination": "/other", "RW": True}
+        for (tmpfs_config, additional_mounts) in (
+            ({"/tmp": "rw,nosuid,nodev,noexec,size=67108864", "/other": "rw"}, []),
+            ({"/tmp": "rw,nosuid,nodev,noexec,size=67108864"}, [extra_tmpfs_mount]),
+        ):
+            with self.subTest(tmpfs_config=tmpfs_config, additional_mounts=additional_mounts):
+                self.executor.host_configuration_overrides = {"Tmpfs": tmpfs_config}
+                self.executor.observed_additional_mounts = additional_mounts
+
+                (operation_status, _, errors) = self.execute()
+
+                self.assertEqual(operation_status, 1)
+                self.assertIn("Docker did not apply required confinement", errors)
+                self.assertFalse(any("start" in args for (args, _, _) in self.executor.docker_calls))
 
     def test_public_root_file_permissions_are_checked(self):
         """Do not mount source files that the unprivileged container cannot read."""
