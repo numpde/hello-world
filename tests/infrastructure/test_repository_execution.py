@@ -391,6 +391,34 @@ class RepositoryContainerContracts(unittest.TestCase):
         self.assertEqual(len(mounts), 3)
         self.assertFalse(any("secrets" in str(value.source) or "/.git" in str(value.source) for value in mounts))
 
+    def test_mount_paths_are_admitted_independently(self):
+        """Source and destination paths must each satisfy Docker's mount grammar."""
+        valid_mount = finite_job.ReadOnlyMount(Path("/tmp/source"), "/workspace/source")
+        valid_job = finite_job.Job(
+            image_id=repository.CHECKER_IMAGE_ID,
+            command=finite_job.Command("python3"),
+            mounts=(valid_mount,),
+        )
+        arguments = finite_job.container_arguments(valid_job, "operation", "owner")
+        self.assertIn("type=bind,source=/tmp/source,target=/workspace/source,readonly", arguments)
+
+        for invalid_mount in (
+            finite_job.ReadOnlyMount(Path("relative"), "/workspace/source"),
+            finite_job.ReadOnlyMount(Path("/tmp/source"), "relative"),
+            finite_job.ReadOnlyMount(Path("/tmp,source"), "/workspace/source"),
+            finite_job.ReadOnlyMount(Path("/tmp/source"), "/workspace,source"),
+            finite_job.ReadOnlyMount(Path("/tmp/source"), "/workspace/line\nbreak"),
+        ):
+            with self.subTest(invalid_mount=invalid_mount):
+                invalid_job = finite_job.Job(
+                    image_id=repository.CHECKER_IMAGE_ID,
+                    command=finite_job.Command("python3"),
+                    mounts=(invalid_mount,),
+                )
+                with self.assertRaises(docker_client.OperationError):
+                    finite_job.container_arguments(invalid_job, "operation", "owner")
+
+
     def test_full_ids_only_and_no_collision(self):
         """Cleanup requires unique full IDs; shortened or duplicated IDs are not safe deletion targets."""
         with self.assertRaisesRegex(docker_client.OperationError, "malformed"):

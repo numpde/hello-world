@@ -34,6 +34,7 @@ IDENTITY_LABEL = "org.numpde.hello-world.owner"
 WORK_TIMEOUT = 180
 CLEANUP_TIMEOUT = 25
 CONTAINER_ID = re.compile(r"[0-9a-f]{64}\Z")
+UNSAFE_MOUNT_PATH = re.compile(r"[,\n\r\x00]")
 
 
 @dataclass(frozen=True)
@@ -111,13 +112,17 @@ def container_arguments(job: Job, token: str, owner: str) -> list[str]:
     mounted_targets = set()
 
     for mount in job.mounts:
-        if not mount.source.is_absolute() or not mount.target.startswith("/"):
-            raise OperationError(f"Expected absolute paths for {mount.source = }, {mount.target = }")
+        if not mount.source.is_absolute():
+            raise OperationError(f"Expected absolute {mount.source = }")
+        if not mount.target.startswith("/"):
+            raise OperationError(f"Expected absolute {mount.target = }")
 
-        # Docker splits --mount options on commas. A comma or control character
-        # inside a path could change which mount options Docker interprets.
-        if any(character in str(mount.source) + mount.target for character in (",", "\n", "\r", "\x00")):
-            raise OperationError(f"Comma or control character in {mount.source = }, {mount.target = }")
+        # Docker treats commas as --mount option delimiters. Each path must be
+        # safe before it is serialized into that comma-separated argument.
+        if UNSAFE_MOUNT_PATH.search(str(mount.source)):
+            raise OperationError(f"Comma or control character in {mount.source = }")
+        if UNSAFE_MOUNT_PATH.search(mount.target):
+            raise OperationError(f"Comma or control character in {mount.target = }")
 
         if mount.target in mounted_targets:
             raise OperationError(f"Duplicate {mount.target = }")
