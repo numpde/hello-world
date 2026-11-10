@@ -139,8 +139,8 @@ def container_arguments(job: Job, token: str, owner: str) -> list[str]:
         mounted_targets.add(mount.target)
         mount_arguments.extend(["--mount", f"type=bind,source={mount.source},target={mount.target},readonly"])
 
-    # The value may contain credentials; reject malformed declarations without
-    # echoing the supplied environment_setting into diagnostic output.
+    # Environment values may contain credentials. Reject malformed declarations
+    # without repeating their contents in diagnostics.
     environment_arguments = []
 
     for environment_setting in job.environment:
