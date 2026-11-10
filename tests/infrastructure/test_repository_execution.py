@@ -411,6 +411,25 @@ class RepositoryContainerContracts(unittest.TestCase):
         self.assertEqual(operation_status, 0, errors)
         self.assertFalse(self.executor.container_present)
 
+    def test_nested_source_permissions_are_checked(self):
+        """The checker cannot traverse private directories or read their files."""
+        source_directory = self.root / "infrastructure" / "nested"
+        source_directory.mkdir()
+        source_file = source_directory / "fixture.py"
+        source_file.write_text("x = 1\n")
+
+        for source in (source_directory, source_file):
+            with self.subTest(source=source):
+                original_permissions = source.stat().st_mode & 0o777
+                source.chmod(0o700 if source.is_dir() else 0o600)
+                try:
+                    with self.assertRaisesRegex(docker_client.OperationError, "non-public"):
+                        self.execute()
+                finally:
+                    source.chmod(original_permissions)
+
+        self.assertFalse(any("create" in argv for (argv, _, _) in self.executor.docker_calls))
+
     def test_cancellation_removes_owned_container(self):
         """A caller interruption still leaves the operation responsible for its container."""
         self.executor.cancel_start = True

@@ -52,26 +52,30 @@ secrets are never mounted."""
         if required_root not in root_entries:
             raise docker_client.OperationError(f"Missing {required_root = }")
 
+    def require_checker_readable(source: Path) -> None:
+        """The unprivileged checker cannot rely on the host owner's permissions."""
+        source_mode = source.lstat().st_mode
+
+        if stat.S_ISDIR(source_mode):
+            required_other_permissions = 0o005
+        elif stat.S_ISREG(source_mode):
+            required_other_permissions = 0o004
+        else:
+            raise docker_client.OperationError(f"Refusing link or non-file {source = }")
+
+        if source_mode & required_other_permissions != required_other_permissions:
+            raise docker_client.OperationError(f"Checker cannot read non-public {source = }")
+
     read_only_mounts = []
 
     for root_name in sorted(PUBLIC_ROOTS & root_entries.keys()):
         source_entry = root_entries[root_name]
-        for walk_directory, subdirectories, filenames in os.walk(source_entry, followlinks=False):
-            for source_child in [Path(walk_directory), *(Path(walk_directory) / part for part in subdirectories + filenames)]:
-                source_mode = source_child.lstat().st_mode
-                if not (stat.S_ISREG(source_mode) or stat.S_ISDIR(source_mode)):
-                    raise docker_client.OperationError(f"Refusing link or non-file {source_child = }")
-                if (stat.S_ISDIR(source_mode) and source_mode & 0o005 != 0o005) or (
-                    stat.S_ISREG(source_mode) and source_mode & 0o004 != 0o004
-                ):
-                    raise docker_client.OperationError(f"Checker cannot read non-public {source_child = }")
-        source_mode = source_entry.lstat().st_mode
-        if not (stat.S_ISREG(source_mode) or stat.S_ISDIR(source_mode)):
-            raise docker_client.OperationError(f"Refusing link or non-file {source_entry = }")
-        if (stat.S_ISDIR(source_mode) and source_mode & 0o005 != 0o005) or (
-            stat.S_ISREG(source_mode) and source_mode & 0o004 != 0o004
-        ):
-            raise docker_client.OperationError(f"Checker cannot read non-public {source_entry = }")
+        require_checker_readable(source_entry)
+
+        for (walk_directory, subdirectories, filenames) in os.walk(source_entry, followlinks=False):
+            for entry_name in (*subdirectories, *filenames):
+                require_checker_readable(Path(walk_directory) / entry_name)
+
         read_only_mounts.append(finite_job.ReadOnlyMount(source_entry, f"/workspace/{root_name}"))
 
     return tuple(read_only_mounts)
