@@ -229,7 +229,7 @@ class RepositoryContainerContracts(unittest.TestCase):
         status, output, errors = self.execute()
         self.assertEqual(status, 1)
         self.assertIn("FAIL: test_example", output)
-        self.assertIn("container exit 1", errors)
+        self.assertRegex(errors, r"Container exited.*1")
         self.assertFalse(self.executor.container_present)
 
     def test_client_attach_failure_is_not_silently_a_success(self):
@@ -249,7 +249,7 @@ class RepositoryContainerContracts(unittest.TestCase):
         (operation_status, _, diagnostics) = self.execute()
 
         self.assertEqual(operation_status, 1)
-        self.assertIn("container exit 9", diagnostics)
+        self.assertRegex(diagnostics, r"Container exited.*9")
         self.assertIn("attachment failed", diagnostics)
         self.assertIn("tail retained", diagnostics)
         self.assertFalse(self.executor.container_present)

@@ -124,10 +124,7 @@ def run_repository_command(
     if job_outcome.output:
         print(job_outcome.output, end="" if job_outcome.output.endswith("\n") else "\n")
     if job_outcome.failure:
-        job_failure = job_outcome.failure
-        if job_failure.startswith("Container exited with status "):
-            job_failure = f"Repository checks failed (container exit {job_failure.rsplit(' ', 1)[-1]})"
-        print(f"REPOSITORY CHECK FAILURE: {job_failure}", file=sys.stderr)
+        print(f"REPOSITORY CHECK FAILURE: {job_outcome.failure}", file=sys.stderr)
 
     for operation_diagnostic in job_outcome.diagnostics:
         print(operation_diagnostic, file=sys.stderr)

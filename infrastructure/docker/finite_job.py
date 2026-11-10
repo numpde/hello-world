@@ -581,8 +581,7 @@ def run_container(docker: DockerClient, context: str, job: Job) -> Outcome:
         if docker_attachment_result.status != 0:
             failure_reasons.append(f"Docker attachment failed ({docker_attachment_result.status = })")
         if container_exit_code != 0:
-            # The command adapter currently recognizes this message prefix.
-            failure_reasons.append(f"Container exited with status {container_exit_code}")
+            failure_reasons.append(f"Container exited with {container_exit_code = }")
 
     except (OperationError, TimeoutError, OSError, KeyboardInterrupt) as error:
         failure_reasons.append(str(error) or error.__class__.__name__)
