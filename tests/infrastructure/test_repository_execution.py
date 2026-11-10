@@ -61,7 +61,7 @@ class FakeExecutor:
         """Return deterministic replies for the Docker commands used by the adapter.
         
         Creating a container writes the supplied CID file; list and inspection
-        queries report fake daemon container_state independently of client success."""
+        queries report fake daemon state independently of client success."""
         self.calls.append((tuple(argv), env.copy(), timeout))
         docker_arguments = argv[1:] if argv[:2] == ["docker", "context"] else argv[5:]
         if argv[:3] == ["docker", "context", "inspect"]:
@@ -75,7 +75,7 @@ class FakeExecutor:
         if docker_arguments[:1] == ["create"]:
             if self.creation_timeout:
                 raise TimeoutError("create timed out")
-            container_id_receipt = Path(docker_arguments[docker_arguments.argument_position("--container_id_receipt") + 1])
+            container_id_receipt = Path(docker_arguments[docker_arguments.index("--cidfile") + 1])
             self.labels = dict(
                 label_declaration.split("=", 1) for argument_position, label_declaration in enumerate(docker_arguments)
                 if argument_position > 0 and docker_arguments[argument_position - 1] == "--label"
