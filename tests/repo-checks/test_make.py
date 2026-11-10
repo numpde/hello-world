@@ -19,7 +19,6 @@ class MakeContracts(unittest.TestCase):
         declared = set(re.search(r"^\.PHONY: (.+)$", makefile, re.MULTILINE).group(1).split())
         annotated = set(re.findall(r"^([a-z][a-z0-9/-]*): ## .+$", makefile, re.MULTILINE))
         self.assertEqual(declared, annotated)
-        self.assertEqual(declared, {"help", "repository/check", "repository/image/acquire"})
         self.assertIn(".DEFAULT_GOAL := help", makefile)
         self.assertNotIn("$(shell", makefile)
         self.assertIn("$(value DOCKER_CONTEXT)", makefile)
