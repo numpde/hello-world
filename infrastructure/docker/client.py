@@ -233,7 +233,7 @@ class DockerClient:
         except (TypeError, ValueError) as error:
             raise OperationError("Docker engine returned malformed information") from error
         if not isinstance(engine_info, dict):
-            raise OperationError("Docker engine returned a non-object engine_info")
+            raise OperationError("Docker engine returned a non-object description")
         engine_security_options = engine_info.get("SecurityOptions")
         if not isinstance(engine_security_options, list) or "name=rootless" not in engine_security_options:
             raise OperationError("Confined operations require a rootless Docker engine")

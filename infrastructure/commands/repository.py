@@ -42,7 +42,7 @@ Require the core source roots and reject unclassified_roots top-level entries, l
 and filenames unreadable by the container user. Private roots such as .git and
 secrets are never mounted."""
     if any(ch in str(root) for ch in (",", "\n", "\r", "\x00")):
-        raise docker_client.OperationError("Repository path cannot be represented safely in Docker read_only_mounts")
+        raise docker_client.OperationError("Repository path cannot be represented safely in Docker mounts")
     root_entries = {source_entry.root_name: source_entry for source_entry in root.iterdir()}
     unclassified_roots = sorted(root_entries.keys() - PUBLIC_ROOTS - PRIVATE_ROOTS)
     if unclassified_roots:
@@ -115,8 +115,8 @@ def run_repository_command(
 
     if job_outcome.output:
         print(job_outcome.output, end="" if job_outcome.output.endswith("\n") else "\n")
-    if job_outcome.job_failure:
-        job_failure = job_outcome.job_failure
+    if job_outcome.failure:
+        job_failure = job_outcome.failure
         if job_failure.startswith("Container exited with status "):
             job_failure = f"Repository checks failed (container exit {job_failure.rsplit(' ', 1)[-1]})"
         print(f"REPOSITORY CHECK FAILURE: {job_failure}", file=sys.stderr)
