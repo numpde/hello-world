@@ -399,6 +399,27 @@ class RepositoryContainerContracts(unittest.TestCase):
             finite_job.container_ids(FAKE_CONTAINER_ID + "\n" + FAKE_CONTAINER_ID + "\n")
 
 
+    def test_partial_signal_handler_installation_restores_previous_handlers(self):
+        """Failure while installing SIGTERM must restore an earlier SIGINT handler."""
+        observed_signal_calls = []
+
+        def simulate_signal_installation(signal_number, replacement_handler):
+            observed_signal_calls.append((signal_number, replacement_handler))
+            if len(observed_signal_calls) == 2:
+                raise RuntimeError("SIGTERM installation failed")
+            return repository.signal.SIG_DFL
+
+        with patch.object(repository.signal, "signal", side_effect=simulate_signal_installation):
+            with self.assertRaisesRegex(RuntimeError, "SIGTERM installation failed"):
+                repository.main(["check"])
+
+        self.assertEqual(
+            [signal_number for (signal_number, _) in observed_signal_calls],
+            [repository.signal.SIGINT, repository.signal.SIGTERM, repository.signal.SIGINT],
+        )
+        self.assertIs(observed_signal_calls[-1][1], repository.signal.SIG_DFL)
+
+
 class NativeClientContracts(unittest.TestCase):
     """Test the local process wrapper directly, without invoking Docker."""
     def test_capture_is_bounded_even_for_large_output(self):

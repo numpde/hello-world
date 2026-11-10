@@ -150,15 +150,20 @@ def main(argv: list[str] | None = None) -> int:
         raise docker_client.Cancelled(f"Caller requested cancellation ({signal.Signals(signal_number).name})")
 
     terminal_signals = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
-    previous_handlers = {number: signal.signal(number, cancel) for number in terminal_signals}
+    previous_handlers = {}
+
     try:
+        # A later signal installation may fail; restore those already changed.
+        for signal_number in terminal_signals:
+            previous_handlers[signal_number] = signal.signal(signal_number, cancel)
+
         return run_repository_command(selected_actions[0], dict(os.environ))
     except (docker_client.OperationError, OSError, TimeoutError, KeyboardInterrupt) as error:
         print(f"REPOSITORY OPERATION FAILURE: {error}", file=sys.stderr)
         return 2
     finally:
-        for number, previous_handler in previous_handlers.items():
-            signal.signal(number, previous_handler)
+        for (signal_number, previous_handler) in previous_handlers.items():
+            signal.signal(signal_number, previous_handler)
 
 
 if __name__ == "__main__":
