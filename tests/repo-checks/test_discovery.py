@@ -33,13 +33,13 @@ class DiscoveryContracts(unittest.TestCase):
             pattern=discovery_options["-p"],
         )
 
-        def discovered_cases(suite):
-            """Walk unittest's nested suites to collect the discovered test cases."""
-            for candidate in suite:
-                if isinstance(candidate, unittest.TestSuite):
-                    yield from discovered_cases(candidate)
+        def discovered_cases(nested_suite):
+            """Walk unittest's nested suites to collect their test cases."""
+            for test_or_suite in nested_suite:
+                if isinstance(test_or_suite, unittest.TestSuite):
+                    yield from discovered_cases(test_or_suite)
                 else:
-                    yield candidate
+                    yield test_or_suite
 
         # Every immediate directory under tests/ must be discovered.
         # A missing package marker must fail this check, not hide the directory.

@@ -126,7 +126,11 @@ def clean_environment(original: dict[str, str]) -> dict[str, str]:
 Caller-provided Docker endpoints, builder settings, proxies and credentials
 must not silently change which daemon or registry a command reaches."""
     allowed_host_variables = ("PATH", "HOME", "XDG_RUNTIME_DIR", "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR")
-    return {variable_name: original[variable_name] for variable_name in allowed_host_variables if variable_name in original}
+    return {
+        variable_name: original[variable_name]
+        for variable_name in allowed_host_variables
+        if variable_name in original
+    }
 
 
 def required_context(environ: dict[str, str]) -> str:
@@ -227,7 +231,10 @@ class DockerClient:
         
         Require systemd with cgroup v2 for resource limits and return the daemon's
         reported ID. This does not inspect individual container restrictions."""
-        engine_info_json = checked_result(self.call("info", "--format", "{{json .}}"), "Docker engine inspection")
+        engine_info_json = checked_result(
+            self.call("info", "--format", "{{json .}}"),
+            "Docker engine inspection",
+        )
         try:
             engine_info = json.loads(engine_info_json)
         except (TypeError, ValueError) as error:

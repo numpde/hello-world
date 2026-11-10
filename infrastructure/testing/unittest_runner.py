@@ -36,17 +36,18 @@ def run(suite: unittest.TestSuite) -> int:
         print("OK")
         return 0
 
-    failures = len(test_result.failures)
-    errors = len(test_result.errors)
-    unexpected = len(test_result.unexpectedSuccesses)
-    print(f"FAILED (failures={failures}, errors={errors}, unexpected successes={unexpected})")
+    failure_count = len(test_result.failures)
+    error_count = len(test_result.errors)
+    unexpected_success_count = len(test_result.unexpectedSuccesses)
+
+    print(f"FAILED (failures={failure_count}, errors={error_count}, unexpected successes={unexpected_success_count})")
     print("\nFailure details (end of unittest run):")
-    for outcome_kind, outcome_records in (("FAIL", test_result.failures), ("ERROR", test_result.errors)):
+    for (outcome_kind, outcome_records) in (("FAIL", test_result.failures), ("ERROR", test_result.errors)):
         for test_case, failure_traceback in outcome_records:
             print(f"\n{outcome_kind}: {test_case.id()}\n{failure_traceback.rstrip()}")
     for test_case in test_result.unexpectedSuccesses:
         print(f"\nUNEXPECTED SUCCESS: {test_case.id()}")
-    print(f"End of failures: failures={failures}, errors={errors}, unexpected_successes={unexpected}")
+    print(f"End of failures: failures={failure_count}, errors={error_count}, unexpected_successes={unexpected_success_count}")
     return 1
 
 

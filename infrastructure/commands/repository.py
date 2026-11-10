@@ -47,11 +47,13 @@ secrets are never mounted."""
     unclassified_roots = sorted(root_entries.keys() - PUBLIC_ROOTS - PRIVATE_ROOTS)
     if unclassified_roots:
         raise docker_client.OperationError(f"Unclassified {unclassified_roots = }")
+
     for required_root in ("Makefile", "infrastructure", "tests"):
         if required_root not in root_entries:
             raise docker_client.OperationError(f"Missing {required_root = }")
 
     read_only_mounts = []
+
     for root_name in sorted(PUBLIC_ROOTS & root_entries.keys()):
         source_entry = root_entries[root_name]
         for walk_directory, subdirectories, filenames in os.walk(source_entry, followlinks=False):
@@ -71,6 +73,7 @@ secrets are never mounted."""
         ):
             raise docker_client.OperationError(f"Checker cannot read non-public {source_entry = }")
         read_only_mounts.append(finite_job.ReadOnlyMount(source_entry, f"/workspace/{root_name}"))
+
     return tuple(read_only_mounts)
 
 
@@ -101,6 +104,7 @@ def run_repository_command(
     if action not in {"check", "acquire"}:
         raise docker_client.OperationError(f"Unknown repository operation: {action}")
     selected_context_name = docker_client.required_context(environ)
+
     with docker_client.docker_client(environ, executor) as selected_engine_client:
         if action == "acquire":
             selected_engine_client.acquire(CHECKER_IMAGE_REFERENCE, CHECKER_IMAGE_ID)
@@ -111,7 +115,11 @@ def run_repository_command(
             expected_id=CHECKER_IMAGE_ID,
             acquire_hint="Run: make repository/image/acquire DOCKER_CONTEXT=<context>",
         )
-        job_outcome = finite_job.run_container(selected_engine_client, selected_context_name, repository_test_job(root, verified_image_id))
+        job_outcome = finite_job.run_container(
+            selected_engine_client,
+            selected_context_name,
+            repository_test_job(root, verified_image_id),
+        )
 
     if job_outcome.output:
         print(job_outcome.output, end="" if job_outcome.output.endswith("\n") else "\n")
@@ -120,8 +128,10 @@ def run_repository_command(
         if job_failure.startswith("Container exited with status "):
             job_failure = f"Repository checks failed (container exit {job_failure.rsplit(' ', 1)[-1]})"
         print(f"REPOSITORY CHECK FAILURE: {job_failure}", file=sys.stderr)
+
     for operation_diagnostic in job_outcome.diagnostics:
         print(operation_diagnostic, file=sys.stderr)
+
     return job_outcome.status
 
 
