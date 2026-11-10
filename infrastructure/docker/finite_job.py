@@ -240,19 +240,29 @@ def verify_container_posture(docker: DockerClient, identifier: str, job: Job) ->
         confinement_findings.append(f"Expected disabled logging in {observed_logging_configuration = }")
 
     observed_ulimits = observed_host_configuration.get("Ulimits")
+    observed_nofile_limits = (
+        [
+            ulimit
+            for ulimit in observed_ulimits
+            if isinstance(ulimit, dict) and ulimit.get("Name") == "nofile"
+        ]
+        if isinstance(observed_ulimits, list)
+        else []
+    )
     expected_nofile_limit = {"Name": "nofile", "Soft": NOFILE_LIMIT, "Hard": NOFILE_LIMIT}
-    if not isinstance(observed_ulimits, list) or expected_nofile_limit not in observed_ulimits:
-        confinement_findings.append(f"Missing {expected_nofile_limit = } in {observed_ulimits = }")
+
+    # Two entries for the same resource would make the effective limit ambiguous.
+    if observed_nofile_limits != [expected_nofile_limit]:
+        confinement_findings.append(f"{observed_nofile_limits = }, {expected_nofile_limit = }")
 
     observed_tmpfs_configuration = observed_host_configuration.get("Tmpfs")
     observed_tmp_options = observed_tmpfs_configuration.get("/tmp") if isinstance(observed_tmpfs_configuration, dict) else None
     expected_tmp_options = set(TMPFS_OPTIONS)
 
-    if (
-        not isinstance(observed_tmp_options, str)
-        or not expected_tmp_options.issubset(observed_tmp_options.split(","))
-    ):
-        confinement_findings.append(f"Unconfined /tmp: {observed_tmp_options = }, {expected_tmp_options = }")
+    # Allow Docker to reorder options, but not to add contradictory permissions
+    # or a second size declaration.
+    if not isinstance(observed_tmp_options, str) or set(observed_tmp_options.split(",")) != expected_tmp_options:
+        confinement_findings.append(f"{observed_tmp_options = }, {expected_tmp_options = }")
 
     # Compare the daemon's complete mount list, not just the requested binds.
     # An additional read-only mount is still a grant this job did not request.

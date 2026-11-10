@@ -267,13 +267,17 @@ class RepositoryContainerContracts(unittest.TestCase):
         self.assertFalse(self.executor.container_present)
         self.assertFalse(any("start" in args for args, _, _ in self.executor.docker_calls))
 
-    def test_capability_additions_and_nofile_limit_must_match(self):
-        """The workload cannot start with extra capabilities or a larger file-descriptor limit."""
+    def test_capabilities_nofile_and_tmpfs_must_match(self):
+        """Contradictory limit entries and broader temporary storage must prevent startup."""
+        expected_nofile = {"Name": "nofile", "Soft": 256, "Hard": 256}
         rejected_host_configuration = (
             {"CapAdd": ["SYS_ADMIN"]},
             {"Ulimits": None},
             {"Ulimits": [{"Name": "nofile", "Soft": 4096, "Hard": 4096}]},
             {"Ulimits": [{"Name": "nofile", "Soft": 256, "Hard": 4096}]},
+            {"Ulimits": [expected_nofile, {"Name": "nofile", "Soft": 4096, "Hard": 4096}]},
+            {"Tmpfs": {"/tmp": "rw,nosuid,nodev,noexec,size=67108864,exec"}},
+            {"Tmpfs": {"/tmp": "rw,nosuid,nodev,noexec,size=67108864,size=1073741824"}},
         )
 
         for host_configuration_overrides in rejected_host_configuration:
@@ -288,6 +292,21 @@ class RepositoryContainerContracts(unittest.TestCase):
                 self.assertFalse(
                     any("start" in arguments for (arguments, _, _) in self.executor.docker_calls)
                 )
+
+    def test_equivalent_inspection_representations_are_accepted(self):
+        """Option order and unrelated resource limits do not weaken confinement."""
+        self.executor.host_configuration_overrides = {
+            "Ulimits": [
+                {"Name": "nofile", "Soft": 256, "Hard": 256},
+                {"Name": "nproc", "Soft": 64, "Hard": 64},
+            ],
+            "Tmpfs": {"/tmp": "noexec,nodev,readonly,nosuid,size=67108864,rw".replace("readonly,", "")},
+        }
+
+        (operation_status, _, errors) = self.execute()
+
+        self.assertEqual(operation_status, 0, errors)
+        self.assertFalse(self.executor.container_present)
 
     def test_public_root_file_permissions_are_checked(self):
         """Do not mount source files that the unprivileged container cannot read."""
