@@ -70,6 +70,8 @@ class ArchitectureContracts(unittest.TestCase):
                 else:
                     yield candidate
 
+        # Every immediate directory under tests/ is expected to be discovered.
+        # A missing package marker must fail this check, not hide the directory.
         expected = {
             directory.name
             for directory in tests_root.iterdir()
