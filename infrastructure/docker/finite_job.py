@@ -111,21 +111,19 @@ def container_arguments(job: Job, token: str, owner: str) -> list[str]:
     mounted_targets = set()
 
     for mount in job.mounts:
-        mount_source_path = str(mount.source)
-
         if not mount.source.is_absolute() or not mount.target.startswith("/"):
             raise OperationError(f"Expected absolute paths for {mount.source = }, {mount.target = }")
 
         # Docker splits --mount options on commas. A comma or control character
         # inside a path could change which mount options Docker interprets.
-        if any(character in mount_source_path + mount.target for character in (",", "\n", "\r", "\x00")):
+        if any(character in str(mount.source) + mount.target for character in (",", "\n", "\r", "\x00")):
             raise OperationError(f"Comma or control character in {mount.source = }, {mount.target = }")
 
         if mount.target in mounted_targets:
             raise OperationError(f"Duplicate {mount.target = }")
 
         mounted_targets.add(mount.target)
-        mount_arguments.extend(["--mount", f"type=bind,source={mount_source_path},target={mount.target},readonly"])
+        mount_arguments.extend(["--mount", f"type=bind,source={mount.source},target={mount.target},readonly"])
 
     # The value may contain credentials; reject malformed declarations without
     # echoing the supplied environment_setting into diagnostic output.
