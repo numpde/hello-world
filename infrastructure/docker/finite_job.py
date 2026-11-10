@@ -385,8 +385,9 @@ def write_receipt(
     endpoint: str,
     token: str,
     owner: str,
+    image_id: str,
 ) -> None:
-    """Save the selected engine and ownership labels before Docker create.
+    """Save the selected engine and ownership evidence before Docker create.
 
     If a client times out after sending a request, operators can identify
     possible daemon-side resources without guessing or globally pruning.
@@ -395,6 +396,7 @@ def write_receipt(
     recovery_receipt.write_text(
         f"Context: {context}\n"
         f"Endpoint: {endpoint}\n"
+        f"Image ID: {image_id}\n"
         f"Operation label: {OPERATION_LABEL}={token}\n"
         f"Owner label: {IDENTITY_LABEL}={owner}\n"
         "Inspect: docker --context <context> ps -a --no-trunc --filter label=<operation-label>\n"
@@ -453,6 +455,7 @@ def run_container(docker: DockerClient, context: str, job: Job) -> Outcome:
             endpoint=docker.endpoint or "",
             token=operation_token,
             owner=owner_token,
+            image_id=job.image_id,
         )
         cid_receipt = operation_directory / "container.cid"
         create_command = [

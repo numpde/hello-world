@@ -323,6 +323,7 @@ class RepositoryContainerContracts(unittest.TestCase):
         recovery = next(line.split("Recovery: ", 1)[1] for line in errors.splitlines()
                         if "Recovery: " in line)
         self.assertTrue(Path(recovery).is_file())
+        self.assertIn(f"Image ID: {repository.CHECKER_IMAGE_ID}", Path(recovery).read_text())
         self.addCleanup(lambda: __import__("shutil").rmtree(Path(recovery).parent))
 
     def test_unconfirmed_cleanup_retains_receipt(self):
