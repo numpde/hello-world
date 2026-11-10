@@ -49,31 +49,36 @@ class ArchitectureContracts(unittest.TestCase):
                             f"{relative_path} imports forbidden dependency {imported}",
                         )
 
-    def test_repository_command_discovers_both_test_areas(self):
-        self.assertEqual(repository.UNITTEST_DISCOVERY_ARGS[:4], ("-s", "tests", "-t", "."))
-        for folder in ("tests/repo-checks", "tests/infrastructure"):
-            with self.subTest(folder=folder):
-                self.assertTrue((ROOT / folder / "__init__.py").is_file())
-                self.assertTrue(any((ROOT / folder).glob("test_*.py")))
-
-    def test_discovery_includes_hyphenated_repo_checks(self):
-        discovered = unittest.TestLoader().discover(
-            start_dir=str(ROOT / "tests"),
-            top_level_dir=str(ROOT),
-            pattern="test_*.py",
+    def test_discovery_covers_test_directories(self):
+        options = dict(zip(
+            repository.UNITTEST_DISCOVERY_ARGS[::2],
+            repository.UNITTEST_DISCOVERY_ARGS[1::2],
+            strict=True,
+        ))
+        tests_root = ROOT / options["-s"]
+        loader = unittest.TestLoader()
+        suite = loader.discover(
+            start_dir=str(tests_root),
+            top_level_dir=str(ROOT / options["-t"]),
+            pattern=options["-p"],
         )
 
-        def test_ids(suite):
+        def cases(suite):
             for candidate in suite:
                 if isinstance(candidate, unittest.TestSuite):
-                    yield from test_ids(candidate)
+                    yield from cases(candidate)
                 else:
-                    yield candidate.id()
+                    yield candidate
 
-        collected = tuple(test_ids(discovered))
-        self.assertTrue(any(name.startswith("tests.repo-checks.") for name in collected))
-        self.assertTrue(any(name.startswith("tests.infrastructure.") for name in collected))
+        expected = {
+            directory.name
+            for directory in tests_root.iterdir()
+            if directory.is_dir() and (directory / "__init__.py").is_file()
+        }
+        discovered = {case.id().split(".")[1] for case in cases(suite)}
 
+        self.assertFalse(loader.errors)
+        self.assertEqual(discovered, expected)
 
 if __name__ == "__main__":
     unittest.main()
