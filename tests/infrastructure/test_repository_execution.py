@@ -300,7 +300,7 @@ class RepositoryContainerContracts(unittest.TestCase):
                 {"Name": "nofile", "Soft": 256, "Hard": 256},
                 {"Name": "nproc", "Soft": 64, "Hard": 64},
             ],
-            "Tmpfs": {"/tmp": "noexec,nodev,readonly,nosuid,size=67108864,rw".replace("readonly,", "")},
+            "Tmpfs": {"/tmp": "noexec,nodev,nosuid,size=67108864,rw"},
         }
 
         (operation_status, _, errors) = self.execute()

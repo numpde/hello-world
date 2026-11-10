@@ -240,15 +240,15 @@ def verify_container_posture(docker: DockerClient, identifier: str, job: Job) ->
         confinement_findings.append(f"Expected disabled logging in {observed_logging_configuration = }")
 
     observed_ulimits = observed_host_configuration.get("Ulimits")
-    observed_nofile_limits = (
-        [
+    observed_nofile_limits = []
+
+    if isinstance(observed_ulimits, list):
+        observed_nofile_limits = [
             ulimit
             for ulimit in observed_ulimits
             if isinstance(ulimit, dict) and ulimit.get("Name") == "nofile"
         ]
-        if isinstance(observed_ulimits, list)
-        else []
-    )
+
     expected_nofile_limit = {"Name": "nofile", "Soft": NOFILE_LIMIT, "Hard": NOFILE_LIMIT}
 
     # Two entries for the same resource would make the effective limit ambiguous.
