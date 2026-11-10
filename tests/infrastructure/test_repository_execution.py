@@ -199,7 +199,9 @@ class RepositoryContainerContracts(unittest.TestCase):
             "--pull=never", "--network=none", "--read-only", "--cap-drop=ALL",
             "--security-opt=no-new-privileges:true", "--user=65532:65532",
             "--pids-limit=64", "--memory=512m", "--memory-swap=512m",
-            "--cpus=2", "--log-driver=none", "--platform=linux/amd64",
+            "--cpus=2", "--ulimit=nofile=256:256",
+            "--tmpfs=/tmp:rw,nosuid,nodev,noexec,size=67108864",
+            "--log-driver=none", "--platform=linux/amd64",
             repository.CHECKER_IMAGE_ID,
         ):
             self.assertTrue(any(required in value for value in create), required)

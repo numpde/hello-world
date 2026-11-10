@@ -208,6 +208,7 @@ def verify_container_posture(docker: DockerClient, identifier: str, job: Job) ->
         "MemorySwap": expected_memory_bytes,
         "PidsLimit": PID_LIMIT,
     }
+
     confinement_findings = []
     for (host_field, expected_host_value) in expected_host_configuration.items():
         observed_host_value = observed_host_configuration.get(host_field)
