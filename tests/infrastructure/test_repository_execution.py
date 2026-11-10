@@ -250,6 +250,20 @@ class RepositoryContainerContracts(unittest.TestCase):
         self.assertIn("tail retained", diagnostics)
         self.assertFalse(self.executor.container_present)
 
+    def test_secondary_workload_failures_precede_cleanup_diagnostics(self):
+        """Report workload evidence before later cleanup uncertainty."""
+        self.executor.failed_start = True
+        self.executor.attachment_truncated = True
+        self.executor.workload_exit_status = 9
+        self.executor.failed_removal = True
+
+        (operation_status, _, errors) = self.execute()
+
+        self.assertEqual(operation_status, 1)
+        self.assertLess(errors.index("tail retained"), errors.index("CLEANUP UNCONFIRMED"))
+        self.assertLess(errors.index("attachment failed"), errors.index("CLEANUP UNCONFIRMED"))
+        self.assertTrue(self.executor.container_present)
+
     def test_timeout_on_running_container_still_retired(self):
         """A client timeout does not stop the daemon's container; cleanup must inspect and remove it."""
         self.executor.work_timeout = True

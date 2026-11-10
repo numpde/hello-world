@@ -571,7 +571,8 @@ def run_container(docker: DockerClient, context: str, job: Job) -> Outcome:
     # instead of overwriting it when several failures occurred.
     if failure_reasons:
         operation_status = 1
-        operation_diagnostics.extend(failure_reasons[:-1])
+        operation_diagnostics = failure_reasons[:-1] + operation_diagnostics
+
     if recovery_directory is not None:
         operation_diagnostics.append(f"Retained operation: {recovery_directory}")
 
