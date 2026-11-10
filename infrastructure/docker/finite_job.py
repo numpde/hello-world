@@ -117,12 +117,12 @@ def container_arguments(job: Job, token: str, owner: str) -> list[str]:
         if not mount.target.startswith("/"):
             raise OperationError(f"Expected absolute {mount.target = }")
 
-        # Docker treats commas as --mount option delimiters. Each path must be
-        # safe before it is serialized into that comma-separated argument.
+        # Docker treats commas as --mount option delimiters. Reject commas,
+        # line breaks and NUL before constructing the option string.
         if UNSAFE_MOUNT_PATH.search(str(mount.source)):
-            raise OperationError(f"Comma or control character in {mount.source = }")
+            raise OperationError(f"Comma, line break or NUL in {mount.source = }")
         if UNSAFE_MOUNT_PATH.search(mount.target):
-            raise OperationError(f"Comma or control character in {mount.target = }")
+            raise OperationError(f"Comma, line break or NUL in {mount.target = }")
 
         if mount.target in mounted_targets:
             raise OperationError(f"Duplicate {mount.target = }")
