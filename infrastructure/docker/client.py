@@ -55,17 +55,17 @@ class Executor(Protocol):
 
 
 class NativeExecutor:
-    """Run a client without blocking on its captured_output or leaving it running.
+    """Run a client without blocking on its output or leaving it running.
 
-The captured_output buffer holds at most the last MAX_OUTPUT bytes. If the docker_client_process
-outlives its client_deadline, terminate its docker_client_process group; callers must separately
+The output buffer holds at most the last MAX_OUTPUT bytes. If the client process
+outlives its deadline, terminate its process group; callers must separately
 check any daemon-side effects."""
 
     def run(self, argv: list[str], env: dict[str, str], timeout: int) -> Result:
-        """Use the supplied environment and client_deadline for one subprocess.
+        """Use the supplied environment and deadline for one subprocess.
         
-        Standard captured_output and error share a bounded buffer. Timeout raises after
-        attempting to stop the local docker_client_process; it is not a Docker cleanup result."""
+        Standard output and error share a bounded buffer. Timeout raises after
+        attempting to stop the local process; it is not a Docker cleanup result."""
         import selectors
 
         docker_client_process = subprocess.Popen(
@@ -227,7 +227,7 @@ class DockerClient:
         
         Require systemd with cgroup v2 for resource limits and return the daemon's
         reported ID. This does not inspect individual container restrictions."""
-        engine_info_json = checked_result(self.call("engine_info_json", "--format", "{{json .}}"), "Docker engine inspection")
+        engine_info_json = checked_result(self.call("info", "--format", "{{json .}}"), "Docker engine inspection")
         try:
             engine_info = json.loads(engine_info_json)
         except (TypeError, ValueError) as error:
@@ -284,7 +284,7 @@ when the context exits. This does not own or retire Docker containers."""
     selected_context_name = required_context(environ)
     selected_docker_client = DockerClient(executor or NativeExecutor(), environ)
     selected_docker_client.context(selected_context_name)
-    with tempfile.TemporaryDirectory(prefix="hello-world-selected_docker_client-client-") as client_config_directory:
+    with tempfile.TemporaryDirectory(prefix="hello-world-docker-client-") as client_config_directory:
         selected_docker_client.config = Path(client_config_directory)
         (selected_docker_client.config / "config.json").write_text("{}\n", encoding="utf-8")
         selected_docker_client.engine()

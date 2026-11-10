@@ -13,7 +13,7 @@ import unittest
 
 
 def run(suite: unittest.TestSuite) -> int:
-    """Execute one suite and report the test_result without custom unittest classes.
+    """Execute one suite and report its result without custom unittest classes.
     
     Collect failures, errors and unexpected successes, print totals first,
     then print complete tracebacks. Skips and expected failures are not failures.
@@ -51,7 +51,7 @@ def run(suite: unittest.TestSuite) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Parse standard unittest discovery flags and run the selected discovered_suite.
+    """Parse standard unittest discovery flags and run the selected suite.
     
     The caller supplies the start directory, top-level directory and filename
     pattern. Refuse root execution; container admission is checked elsewhere."""

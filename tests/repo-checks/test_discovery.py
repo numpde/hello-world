@@ -34,14 +34,14 @@ class DiscoveryContracts(unittest.TestCase):
         )
 
         def discovered_cases(suite):
-            """Walk unittest's nested suites to collect the discovered_directories test cases."""
+            """Walk unittest's nested suites to collect the discovered test cases."""
             for candidate in suite:
                 if isinstance(candidate, unittest.TestSuite):
                     yield from discovered_cases(candidate)
                 else:
                     yield candidate
 
-        # Every immediate directory under tests/ is expected_directories to be discovered_directories.
+        # Every immediate directory under tests/ must be discovered.
         # A missing package marker must fail this check, not hide the directory.
         expected_directories = {
             directory.name

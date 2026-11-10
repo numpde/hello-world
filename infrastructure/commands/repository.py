@@ -38,7 +38,7 @@ UNITTEST_COMMAND = finite_job.Command(
 def public_mounts(root: Path) -> tuple[finite_job.ReadOnlyMount, ...]:
     """Select the checkout entries that tests may read inside Docker.
 
-Require the core source roots and reject unclassified_roots top-level entries, links
+Require the core source roots and reject unclassified top-level entries, links
 and filenames unreadable by the container user. Private roots such as .git and
 secrets are never mounted."""
     if any(ch in str(root) for ch in (",", "\n", "\r", "\x00")):

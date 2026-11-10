@@ -167,7 +167,7 @@ def verify_container_posture(docker: DockerClient, identifier: str, job: Job) ->
     """
     container_inspection_json = checked_result(
         result=docker.call("container", "inspect", "--format", "{{json .}}", identifier),
-        purpose="Container confinement container_inspection",
+        purpose="Container confinement inspection",
     )
 
     try:
