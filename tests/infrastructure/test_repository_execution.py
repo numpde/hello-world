@@ -1,4 +1,4 @@
-"""Behavior contracts for the engine boundary and ownership lifecycle."""
+"""Repository command integration, Docker client and finite-job contracts."""
 
 from __future__ import annotations
 
@@ -12,8 +12,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from tools.container import finite_job
-from tools.repository import checker
+from infrastructure.docker import client as docker_client
+from infrastructure.docker import finite_job
+from infrastructure.commands import repository
 
 
 IDENTIFIER = "a" * 64
@@ -49,13 +50,13 @@ class FakeExecutor:
         self.calls.append((tuple(argv), env.copy(), timeout))
         args = argv[1:] if argv[:2] == ["docker", "context"] else argv[5:]
         if argv[:3] == ["docker", "context", "inspect"]:
-            return finite_job.Result(0, self.endpoint + "\n")
+            return docker_client.Result(0, self.endpoint + "\n")
         if args[:2] == ["info", "--format"]:
-            return finite_job.Result(0, json.dumps(self.engine) + "\n")
+            return docker_client.Result(0, json.dumps(self.engine) + "\n")
         if args[:2] == ["image", "inspect"]:
-            return finite_job.Result(0, checker.CHECKER_IMAGE_ID + "\n") if self.image_present else finite_job.Result(1, "No such image")
+            return docker_client.Result(0, repository.CHECKER_IMAGE_ID + "\n") if self.image_present else docker_client.Result(1, "No such image")
         if args[:1] == ["pull"]:
-            return finite_job.Result(0, "Downloaded pinned digest\n")
+            return docker_client.Result(0, "Downloaded pinned digest\n")
         if args[:1] == ["create"]:
             if self.creation_timeout:
                 raise TimeoutError("create timed out")
@@ -74,15 +75,15 @@ class FakeExecutor:
                 }
                 for part in args if part.startswith("type=bind,")
             ]
-            return finite_job.Result(0, IDENTIFIER + "\n")
+            return docker_client.Result(0, IDENTIFIER + "\n")
         if args[:1] == ["ps"]:
-            return finite_job.Result(0, IDENTIFIER + "\n" if self.present else "")
+            return docker_client.Result(0, IDENTIFIER + "\n" if self.present else "")
         if args[:3] == ["container", "inspect", "--format"]:
             if args[3] == "{{json .State}}":
                 state = {"Running": False, "ExitCode": self.exit_status}
                 if self.bad_exit_state:
                     state = {"Running": True, "ExitCode": 0}
-                return finite_job.Result(0, json.dumps(state) + "\n")
+                return docker_client.Result(0, json.dumps(state) + "\n")
             labels = self.labels.copy()
             if self.malformed_ownership:
                 labels[finite_job.IDENTITY_LABEL] = "not-our-operation"
@@ -96,24 +97,24 @@ class FakeExecutor:
             }
             if self.bad_confinement:
                 host["NetworkMode"] = "bridge"
-            return finite_job.Result(0, json.dumps({
-                "Id": IDENTIFIER, "Image": checker.CHECKER_IMAGE_ID,
+            return docker_client.Result(0, json.dumps({
+                "Id": IDENTIFIER, "Image": repository.CHECKER_IMAGE_ID,
                 "Config": {"Labels": labels, "User": "65532:65532"},
                 "HostConfig": host, "Mounts": self.mounts,
             }))
         if args[:1] == ["start"]:
             if self.cancel_start:
-                raise finite_job.Cancelled("caller interrupted work")
+                raise docker_client.Cancelled("caller interrupted work")
             if self.work_timeout:
                 raise TimeoutError("attachment timed out")
             if self.failed_start:
-                return finite_job.Result(1, "Docker client failed to attach")
-            return finite_job.Result(0, self.source_output)
+                return docker_client.Result(1, "Docker client failed to attach")
+            return docker_client.Result(0, self.source_output)
         if args[:1] == ["rm"]:
             if self.failed_removal:
-                return finite_job.Result(1, "rm rejected")
+                return docker_client.Result(1, "rm rejected")
             self.present = False
-            return finite_job.Result(0, IDENTIFIER + "\n")
+            return docker_client.Result(0, IDENTIFIER + "\n")
         raise AssertionError(f"Unexpected Docker call: {argv}")
 
 
@@ -123,9 +124,9 @@ class RepositoryContainerContracts(unittest.TestCase):
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
         (self.root / "Makefile").write_text("help:\n\t@echo ok\n")
-        (self.root / "tools").mkdir()
+        (self.root / "infrastructure").mkdir()
         (self.root / "tests").mkdir()
-        (self.root / "tools" / "dummy.py").write_text("x = 1\n")
+        (self.root / "infrastructure" / "dummy.py").write_text("x = 1\n")
         self.executor = FakeExecutor()
         self.environment = {
             "HELLO_WORLD_DOCKER_CONTEXT": "rootless",
@@ -136,20 +137,20 @@ class RepositoryContainerContracts(unittest.TestCase):
             "HTTP_PROXY": "http://untrusted", "HTTPS_PROXY": "http://untrusted",
             "PYTHONPATH": "/untrusted", "AWS_SECRET_ACCESS_KEY": "nope",
         }
-        self.uid_patch = patch.object(finite_job.os, "geteuid", return_value=1000)
+        self.uid_patch = patch.object(docker_client.os, "geteuid", return_value=1000)
         self.uid_patch.start()
         self.addCleanup(self.uid_patch.stop)
-        self.gid_patch = patch.object(finite_job.os, "getegid", return_value=1000)
+        self.gid_patch = patch.object(docker_client.os, "getegid", return_value=1000)
         self.gid_patch.start()
         self.addCleanup(self.gid_patch.stop)
-        self.socket_patch = patch.object(checker, "verify_socket")
+        self.socket_patch = patch.object(docker_client, "verify_socket")
         self.socket_patch.start()
         self.addCleanup(self.socket_patch.stop)
 
     def execute(self, action="check"):
         output, errors = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
-            status = checker.run_repository_command(action, self.environment, self.executor, self.root)
+            status = repository.run_repository_command(action, self.environment, self.executor, self.root)
         return status, output.getvalue(), errors.getvalue()
 
     def test_success_contained_and_cleanup_verified(self):
@@ -164,7 +165,7 @@ class RepositoryContainerContracts(unittest.TestCase):
             "--security-opt=no-new-privileges:true", "--user=65532:65532",
             "--pids-limit=64", "--memory=512m", "--memory-swap=512m",
             "--cpus=2", "--log-driver=none", "--platform=linux/amd64",
-            checker.CHECKER_IMAGE_ID,
+            repository.CHECKER_IMAGE_ID,
         ):
             self.assertTrue(any(required in value for value in create), required)
         mounts = [create[index + 1] for index, value in enumerate(create) if value == "--mount"]
@@ -215,7 +216,7 @@ class RepositoryContainerContracts(unittest.TestCase):
         source = self.root / "Makefile"
         source.chmod(0o600)
         self.addCleanup(lambda: source.chmod(0o644))
-        with self.assertRaisesRegex(finite_job.OperationError, "non-public"):
+        with self.assertRaisesRegex(docker_client.OperationError, "non-public"):
             self.execute()
         self.assertFalse(self.executor.present)
 
@@ -265,22 +266,22 @@ class RepositoryContainerContracts(unittest.TestCase):
     def test_parallel_test_command_is_an_adapter_choice(self):
         replacement = finite_job.Command(
             executable="unittest-parallel",
-            arguments=(*checker.UNITTEST_DISCOVERY_ARGS, "--level=module", "-j", "2"),
+            arguments=(*repository.UNITTEST_DISCOVERY_ARGS, "--level=module", "-j", "2"),
         )
-        job = checker.repository_test_job(self.root, checker.CHECKER_IMAGE_ID, replacement)
+        job = repository.repository_test_job(self.root, repository.CHECKER_IMAGE_ID, replacement)
         create = finite_job.container_arguments(job, "test-token", "test-owner")
         self.assertIn("--entrypoint=unittest-parallel", create)
         self.assertEqual(tuple(create[-len(replacement.arguments):]), replacement.arguments)
-        self.assertNotIn("/workspace/tools/repository/unittest_runner.py", create)
+        self.assertNotIn("/workspace/infrastructure/testing/unittest_runner.py", create)
 
     def test_generic_job_does_not_depend_on_repository_checks(self):
         job = finite_job.Job(
-            image_id=checker.CHECKER_IMAGE_ID,
+            image_id=repository.CHECKER_IMAGE_ID,
             command=finite_job.Command("/bin/echo", ("hello",)),
             mounts=(),
         )
         create = finite_job.container_arguments(job, "test-token", "test-owner")
-        self.assertEqual(create[-2:], [checker.CHECKER_IMAGE_ID, "hello"])
+        self.assertEqual(create[-2:], [repository.CHECKER_IMAGE_ID, "hello"])
         self.assertIn("--entrypoint=/bin/echo", create)
 
     def test_networked_acquisition_is_separate(self):
@@ -293,7 +294,7 @@ class RepositoryContainerContracts(unittest.TestCase):
 
     def test_missing_pinned_image_has_explicit_remedy(self):
         self.executor.image_present = False
-        with self.assertRaisesRegex(finite_job.OperationError, "repository/image/acquire"):
+        with self.assertRaisesRegex(docker_client.OperationError, "repository/image/acquire"):
             self.execute()
         self.assertFalse(self.executor.present)
 
@@ -301,7 +302,7 @@ class RepositoryContainerContracts(unittest.TestCase):
         for changed in ({"SecurityOptions": []}, {"CgroupVersion": "1"}, {"Architecture": "arm64"}):
             with self.subTest(changed=changed):
                 self.executor.engine = ENGINE | changed
-                with self.assertRaises(finite_job.OperationError):
+                with self.assertRaises(docker_client.OperationError):
                     self.execute()
                 self.assertFalse(self.executor.present)
 
@@ -309,23 +310,23 @@ class RepositoryContainerContracts(unittest.TestCase):
         for input_name in (None, "", "../../engine", "bad context", "$(shell touch /tmp/nope)"):
             with self.subTest(input_name=input_name):
                 self.environment["HELLO_WORLD_DOCKER_CONTEXT"] = input_name
-                with self.assertRaises(finite_job.OperationError):
+                with self.assertRaises(docker_client.OperationError):
                     self.execute()
         self.assertFalse(self.executor.calls)
 
     def test_remote_endpoint_rejected(self):
         self.executor.endpoint = "tcp://not-allowed:2376"
-        with self.assertRaisesRegex(finite_job.OperationError, "local Unix socket"):
+        with self.assertRaisesRegex(docker_client.OperationError, "local Unix socket"):
             self.execute()
 
     def test_source_symlink_and_unknown_root_rejected_before_create(self):
         extra = self.root / "config.env"
         extra.write_text("SECRET=hello")
-        with self.assertRaisesRegex(finite_job.OperationError, "Unclassified"):
+        with self.assertRaisesRegex(docker_client.OperationError, "Unclassified"):
             self.execute()
         extra.unlink()
-        (self.root / "tools" / "link").symlink_to("/etc/passwd")
-        with self.assertRaisesRegex(finite_job.OperationError, "Refusing link"):
+        (self.root / "infrastructure" / "link").symlink_to("/etc/passwd")
+        with self.assertRaisesRegex(docker_client.OperationError, "Refusing link"):
             self.execute()
         self.assertFalse(self.executor.present)
 
@@ -334,51 +335,51 @@ class RepositoryContainerContracts(unittest.TestCase):
         (self.root / ".git" / "config").write_text("private")
         (self.root / "secrets").mkdir()
         (self.root / "secrets" / "key").write_text("private")
-        mounts = checker.public_mounts(self.root)
+        mounts = repository.public_mounts(self.root)
         self.assertEqual(len(mounts), 3)
         self.assertFalse(any("secrets" in str(value.source) or "/.git" in str(value.source) for value in mounts))
 
     def test_full_ids_only_and_no_collision(self):
-        with self.assertRaisesRegex(finite_job.OperationError, "malformed"):
+        with self.assertRaisesRegex(docker_client.OperationError, "malformed"):
             finite_job.container_ids("abc\n")
-        with self.assertRaisesRegex(finite_job.OperationError, "duplicate"):
+        with self.assertRaisesRegex(docker_client.OperationError, "duplicate"):
             finite_job.container_ids(IDENTIFIER + "\n" + IDENTIFIER + "\n")
 
 
 class NativeClientContracts(unittest.TestCase):
     def test_capture_is_bounded_even_for_large_output(self):
-        client = finite_job.NativeExecutor()
+        client = docker_client.NativeExecutor()
         command = [sys.executable, "-I", "-c", "import sys;sys.stdout.write('x'*1500000)"]
-        result = client.run(command, finite_job.clean_environment(os.environ.copy()), timeout=10)
+        result = client.run(command, docker_client.clean_environment(os.environ.copy()), timeout=10)
         self.assertEqual(result.status, 0)
         self.assertTrue(result.truncated)
-        self.assertEqual(len(result.output), finite_job.MAX_OUTPUT)
+        self.assertEqual(len(result.output), docker_client.MAX_OUTPUT)
 
     def test_native_timeout_does_not_leave_its_client(self):
-        client = finite_job.NativeExecutor()
+        client = docker_client.NativeExecutor()
         command = [sys.executable, "-I", "-c", "import time;time.sleep(30)"]
         with self.assertRaises(TimeoutError):
-            client.run(command, finite_job.clean_environment(os.environ.copy()), timeout=1)
+            client.run(command, docker_client.clean_environment(os.environ.copy()), timeout=1)
 
 
 class InputContracts(unittest.TestCase):
     def test_socket_addresses(self):
-        self.assertEqual(str(finite_job.socket_path("unix:///run/user/1000/docker.sock")),
+        self.assertEqual(str(docker_client.socket_path("unix:///run/user/1000/docker.sock")),
                          "/run/user/1000/docker.sock")
         for endpoint in ("tcp://elsewhere", "unix://relative", "unix:///a\nb", "ssh://hostname", "unix:///a?b"):
-            with self.subTest(endpoint=endpoint), self.assertRaises(finite_job.OperationError):
-                finite_job.socket_path(endpoint)
+            with self.subTest(endpoint=endpoint), self.assertRaises(docker_client.OperationError):
+                docker_client.socket_path(endpoint)
 
     def test_owned_rootless_socket_requires_actual_socket(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "not-a-socket"
             path.write_text("fake")
-            with self.assertRaisesRegex(finite_job.OperationError, "user-owned"):
-                finite_job.verify_socket("unix://" + str(path))
+            with self.assertRaisesRegex(docker_client.OperationError, "user-owned"):
+                docker_client.verify_socket("unix://" + str(path))
 
     def test_checked_result_does_not_relabel_errors(self):
-        with self.assertRaisesRegex(finite_job.OperationError, "exit 33"):
-            finite_job.checked_result(finite_job.Result(33, "trace was retained"), "context")
+        with self.assertRaisesRegex(docker_client.OperationError, "exit 33"):
+            docker_client.checked_result(docker_client.Result(33, "trace was retained"), "context")
 
 
 if __name__ == "__main__":

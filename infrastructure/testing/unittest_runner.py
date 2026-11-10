@@ -1,4 +1,4 @@
-"""Unittest-specific repository entry point; emit full failures after the summary."""
+"""Run unittest discovery and report full failures after the summary."""
 
 import argparse
 import os
@@ -9,7 +9,7 @@ import unittest
 
 def run(suite: unittest.TestSuite) -> int:
     if suite.countTestCases() == 0:
-        print("NO TESTS RAN: repository test discovery was empty", file=sys.stderr)
+        print("NO TESTS RAN: unittest discovery was empty", file=sys.stderr)
         return 1
 
     result = unittest.TestResult()
@@ -30,7 +30,7 @@ def run(suite: unittest.TestSuite) -> int:
     errors = len(result.errors)
     unexpected = len(result.unexpectedSuccesses)
     print(f"FAILED (failures={failures}, errors={errors}, unexpected successes={unexpected})")
-    print("\nFailure details (end of repository run):")
+    print("\nFailure details (end of unittest run):")
     for kind, outcomes in (("FAIL", result.failures), ("ERROR", result.errors)):
         for test, traceback in outcomes:
             print(f"\n{kind}: {test.id()}\n{traceback.rstrip()}")
@@ -42,7 +42,7 @@ def run(suite: unittest.TestSuite) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     if os.geteuid() == 0 or os.getegid() == 0:
-        print("Repository checker must not run as root", file=sys.stderr)
+        print("Unittest runner must not run as root", file=sys.stderr)
         return 2
 
     parser = argparse.ArgumentParser(description="Run repository tests and report failures last")

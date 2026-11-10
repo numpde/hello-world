@@ -1,10 +1,10 @@
-"""Repository test outcomes remain useful without custom unittest runners."""
+"""Unittest outcome reporting remains independent of repository dispatch."""
 
 import contextlib
 import io
 import unittest
 
-from tools.repository import unittest_runner
+from infrastructure.testing import unittest_runner
 
 
 class ResultContracts(unittest.TestCase):
