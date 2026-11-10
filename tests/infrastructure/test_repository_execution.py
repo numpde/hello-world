@@ -437,7 +437,12 @@ class RepositoryContainerContracts(unittest.TestCase):
         recovery = next(line.split("Recovery: ", 1)[1] for line in errors.splitlines()
                         if "Recovery: " in line)
         self.assertTrue(Path(recovery).is_file())
-        self.assertIn(f"Image ID: {repository.CHECKER_IMAGE_ID}", Path(recovery).read_text())
+        recovery_text = Path(recovery).read_text()
+        self.assertIn(f"Image ID: {repository.CHECKER_IMAGE_ID}", recovery_text)
+        self.assertIn("docker --context rootless ps -a", recovery_text)
+        self.assertIn(f"--filter label={finite_job.OPERATION_LABEL}=", recovery_text)
+        self.assertIn("container.cid", recovery_text)
+        self.assertNotIn("<context>", recovery_text)
         self.addCleanup(lambda: shutil.rmtree(Path(recovery).parent))
 
     def test_unconfirmed_cleanup_retains_receipt(self):

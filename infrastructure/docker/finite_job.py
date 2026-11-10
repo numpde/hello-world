@@ -432,8 +432,11 @@ def write_receipt(
         f"Image ID: {image_id}\n"
         f"Operation label: {OPERATION_LABEL}={token}\n"
         f"Owner label: {IDENTITY_LABEL}={owner}\n"
-        "Inspect: docker --context <context> ps -a --no-trunc --filter label=<operation-label>\n"
-        "Verify ownership before removing any container. Do not use global prune.\n",
+        f"Inspect: docker --context {context} ps -a --no-trunc "
+        f"--filter label={OPERATION_LABEL}={token}\n"
+        "If container.cid exists, inspect its full ID as well; a partial create "
+        "might not have applied the labels.\n"
+        "Verify image and both ownership labels before removing a container. Do not use global prune.\n",
         encoding="utf-8",
     )
     recovery_receipt.chmod(0o600)
