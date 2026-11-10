@@ -43,7 +43,7 @@ and filenames unreadable by the container user. Private roots such as .git and
 secrets are never mounted."""
     if any(ch in str(root) for ch in (",", "\n", "\r", "\x00")):
         raise docker_client.OperationError("Repository path cannot be represented safely in Docker mounts")
-    root_entries = {source_entry.root_name: source_entry for source_entry in root.iterdir()}
+    root_entries = {source_entry.name: source_entry for source_entry in root.iterdir()}
     unclassified_roots = sorted(root_entries.keys() - PUBLIC_ROOTS - PRIVATE_ROOTS)
     if unclassified_roots:
         raise docker_client.OperationError(f"Unclassified {unclassified_roots = }")
