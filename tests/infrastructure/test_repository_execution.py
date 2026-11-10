@@ -61,48 +61,48 @@ class FakeExecutor:
         """Return deterministic replies for the Docker commands used by the adapter.
         
         Creating a container writes the supplied CID file; list and inspection
-        queries report fake daemon state independently of client success."""
+        queries report fake daemon container_state independently of client success."""
         self.calls.append((tuple(argv), env.copy(), timeout))
-        args = argv[1:] if argv[:2] == ["docker", "context"] else argv[5:]
+        docker_arguments = argv[1:] if argv[:2] == ["docker", "context"] else argv[5:]
         if argv[:3] == ["docker", "context", "inspect"]:
             return docker_client.Result(0, self.endpoint + "\n")
-        if args[:2] == ["info", "--format"]:
+        if docker_arguments[:2] == ["info", "--format"]:
             return docker_client.Result(0, json.dumps(self.engine) + "\n")
-        if args[:2] == ["image", "inspect"]:
+        if docker_arguments[:2] == ["image", "inspect"]:
             return docker_client.Result(0, repository.CHECKER_IMAGE_ID + "\n") if self.image_present else docker_client.Result(1, "No such image")
-        if args[:1] == ["pull"]:
+        if docker_arguments[:1] == ["pull"]:
             return docker_client.Result(0, "Downloaded pinned digest\n")
-        if args[:1] == ["create"]:
+        if docker_arguments[:1] == ["create"]:
             if self.creation_timeout:
                 raise TimeoutError("create timed out")
-            cidfile = Path(args[args.index("--cidfile") + 1])
+            container_id_receipt = Path(docker_arguments[docker_arguments.argument_position("--container_id_receipt") + 1])
             self.labels = dict(
-                item.split("=", 1) for index, item in enumerate(args)
-                if index > 0 and args[index - 1] == "--label"
+                label_declaration.split("=", 1) for argument_position, label_declaration in enumerate(docker_arguments)
+                if argument_position > 0 and docker_arguments[argument_position - 1] == "--label"
             )
-            cidfile.write_text(IDENTIFIER + "\n", encoding="ascii")
+            container_id_receipt.write_text(IDENTIFIER + "\n", encoding="ascii")
             self.present = True
             self.mounts = [
                 {
                     "Type": "bind", "RW": False,
-                    "Source": part.split("source=", 1)[1].split(",target=", 1)[0],
-                    "Destination": part.split("target=", 1)[1].split(",readonly", 1)[0],
+                    "Source": mount_declaration.split("source=", 1)[1].split(",target=", 1)[0],
+                    "Destination": mount_declaration.split("target=", 1)[1].split(",readonly", 1)[0],
                 }
-                for part in args if part.startswith("type=bind,")
+                for mount_declaration in docker_arguments if mount_declaration.startswith("type=bind,")
             ]
             return docker_client.Result(0, IDENTIFIER + "\n")
-        if args[:1] == ["ps"]:
+        if docker_arguments[:1] == ["ps"]:
             return docker_client.Result(0, IDENTIFIER + "\n" if self.present else "")
-        if args[:3] == ["container", "inspect", "--format"]:
-            if args[3] == "{{json .State}}":
-                state = {"Running": False, "ExitCode": self.exit_status}
+        if docker_arguments[:3] == ["container", "inspect", "--format"]:
+            if docker_arguments[3] == "{{json .State}}":
+                container_state = {"Running": False, "ExitCode": self.exit_status}
                 if self.bad_exit_state:
-                    state = {"Running": True, "ExitCode": 0}
-                return docker_client.Result(0, json.dumps(state) + "\n")
+                    container_state = {"Running": True, "ExitCode": 0}
+                return docker_client.Result(0, json.dumps(container_state) + "\n")
             labels = self.labels.copy()
             if self.malformed_ownership:
                 labels[finite_job.IDENTITY_LABEL] = "not-our-operation"
-            host = {
+            host_configuration = {
                 "NetworkMode": "none", "ReadonlyRootfs": True, "Privileged": False,
                 "NanoCpus": 2_000_000_000, "Memory": 536_870_912,
                 "MemorySwap": 536_870_912, "PidsLimit": 64,
@@ -111,13 +111,13 @@ class FakeExecutor:
                 "Tmpfs": {"/tmp": "rw,nosuid,nodev,noexec,size=67108864"},
             }
             if self.bad_confinement:
-                host["NetworkMode"] = "bridge"
+                host_configuration["NetworkMode"] = "bridge"
             return docker_client.Result(0, json.dumps({
                 "Id": IDENTIFIER, "Image": repository.CHECKER_IMAGE_ID,
                 "Config": {"Labels": labels, "User": "65532:65532"},
-                "HostConfig": host, "Mounts": self.mounts,
+                "HostConfig": host_configuration, "Mounts": self.mounts,
             }))
-        if args[:1] == ["start"]:
+        if docker_arguments[:1] == ["start"]:
             if self.cancel_start:
                 raise docker_client.Cancelled("caller interrupted work")
             if self.work_timeout:
@@ -125,7 +125,7 @@ class FakeExecutor:
             if self.failed_start:
                 return docker_client.Result(1, "Docker client failed to attach")
             return docker_client.Result(0, self.source_output)
-        if args[:1] == ["rm"]:
+        if docker_arguments[:1] == ["rm"]:
             if self.failed_removal:
                 return docker_client.Result(1, "rm rejected")
             self.present = False
@@ -172,10 +172,18 @@ class RepositoryContainerContracts(unittest.TestCase):
 
     def execute(self, action="check"):
         """Run the repository command and capture its public output and diagnostics."""
-        output, errors = io.StringIO(), io.StringIO()
-        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
-            status = repository.run_repository_command(action, self.environment, self.executor, self.root)
-        return status, output.getvalue(), errors.getvalue()
+        captured_stdout = io.StringIO()
+        captured_stderr = io.StringIO()
+
+        with contextlib.redirect_stdout(captured_stdout), contextlib.redirect_stderr(captured_stderr):
+            operation_status = repository.run_repository_command(
+                action,
+                self.environment,
+                self.executor,
+                self.root,
+            )
+
+        return operation_status, captured_stdout.getvalue(), captured_stderr.getvalue()
 
     def test_success_contained_and_cleanup_verified(self):
         """A successful job must still prove confinement, sanitize Docker inputs and retire its container."""
