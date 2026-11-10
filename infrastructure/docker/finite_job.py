@@ -171,15 +171,24 @@ def container_arguments(job: Job, token: str, owner: str) -> list[str]:
     ]
 
 
-def verify_container_posture(docker: DockerClient, identifier: str, job: Job) -> None:
+def verify_container_posture(
+    docker: DockerClient,
+    identifier: str,
+    job: Job,
+    timeout: Callable[[], int] = lambda: CLIENT_TIMEOUT,
+) -> None:
     """Inspect the engine's container settings before starting the workload.
 
     Check network, root filesystem, privileges, resource limits, temporary
     storage and every source mount. A requested flag alone is not proof that
-    the engine applied the restriction.
+    the engine applied the restriction. The timeout callback bounds inspection
+    by the caller's remaining work budget.
     """
     container_inspection_json = checked_result(
-        result=docker.call("container", "inspect", "--format", "{{json .}}", identifier),
+        result=docker.call(
+            "container", "inspect", "--format", "{{json .}}", identifier,
+            timeout=timeout(),
+        ),
         purpose="Container confinement inspection",
     )
 
@@ -363,12 +372,12 @@ def cleanup(docker: DockerClient, token: str, owner: str, image_id: str) -> None
 
     def remaining_cleanup_timeout() -> int:
         """Bound each cleanup request by the time left for the whole cleanup."""
-        remaining_cleanup_seconds = cleanup_deadline - time.monotonic()
+        remaining_cleanup_seconds = int(cleanup_deadline - time.monotonic())
 
         if remaining_cleanup_seconds <= 0:
             raise TimeoutError("Docker cleanup budget exhausted")
 
-        return min(CLIENT_TIMEOUT, max(1, int(remaining_cleanup_seconds)))
+        return min(CLIENT_TIMEOUT, remaining_cleanup_seconds)
 
     owned_container_ids = owned_containers(docker, token, owner, image_id, timeout=remaining_cleanup_timeout)
 
@@ -447,8 +456,18 @@ def run_container(docker: DockerClient, context: str, job: Job) -> Outcome:
     operation_token = secrets.token_hex(16)
     owner_token = secrets.token_hex(16)
     docker_create_arguments = container_arguments(job=job, token=operation_token, owner=owner_token)
+    work_deadline = time.monotonic() + WORK_TIMEOUT
+
+    def remaining_work_timeout(maximum_timeout: int = CLIENT_TIMEOUT) -> int:
+        """Bound each Docker request by the time left for the complete work phase."""
+        remaining_seconds = int(work_deadline - time.monotonic())
+        if remaining_seconds <= 0:
+            raise TimeoutError("Docker work budget exhausted")
+        return min(maximum_timeout, remaining_seconds)
+
     operation_directory = Path(tempfile.mkdtemp(prefix="hello-world-operation-"))
     recovery_directory: Path | None = operation_directory
+    container_creation_requested = False
     container_create_confirmed = False
 
     job_output = ""
@@ -473,8 +492,12 @@ def run_container(docker: DockerClient, context: str, job: Job) -> Outcome:
             "--cidfile", str(cid_receipt),
             *docker_create_arguments[1:],
         ]
+        create_timeout = remaining_work_timeout()
+
+        # A lost reply after this call cannot prove Docker created nothing.
+        container_creation_requested = True
         reported_container_id = checked_result(
-            result=docker.call(*create_command),
+            result=docker.call(*create_command, timeout=create_timeout),
             purpose="Container creation",
         )
 
@@ -494,6 +517,7 @@ def run_container(docker: DockerClient, context: str, job: Job) -> Outcome:
             token=operation_token,
             owner=owner_token,
             image_id=job.image_id,
+            timeout=remaining_work_timeout,
         )
         if observed_container_ids != [container_id]:
             raise OperationError(
@@ -501,9 +525,11 @@ def run_container(docker: DockerClient, context: str, job: Job) -> Outcome:
             )
 
         container_create_confirmed = True
-        verify_container_posture(docker, container_id, job)
+        verify_container_posture(docker, container_id, job, timeout=remaining_work_timeout)
 
-        docker_attachment_result = docker.call("start", "--attach", container_id, timeout=WORK_TIMEOUT)
+        docker_attachment_result = docker.call(
+            "start", "--attach", container_id, timeout=remaining_work_timeout(WORK_TIMEOUT)
+        )
         job_output = docker_attachment_result.output
         if docker_attachment_result.truncated:
             failure_reasons.append(f"Container output exceeded {MAX_OUTPUT} bytes; tail retained")
@@ -511,7 +537,10 @@ def run_container(docker: DockerClient, context: str, job: Job) -> Outcome:
         # The attachment client may finish while the workload is still running.
         # Only the daemon's final state establishes the workload exit status.
         completion_inspection = checked_result(
-            result=docker.call("container", "inspect", "--format", "{{json .State}}", container_id),
+            result=docker.call(
+                "container", "inspect", "--format", "{{json .State}}", container_id,
+                timeout=remaining_work_timeout(),
+            ),
             purpose="Container completion inspection",
         )
 
@@ -537,35 +566,43 @@ def run_container(docker: DockerClient, context: str, job: Job) -> Outcome:
         # Even a timed-out create can finish on the daemon. Inspect before
         # declaring retirement; keep recovery information if uncertain.
         with protected_cleanup():
-            try:
-                cleanup(
-                    docker=docker,
-                    token=operation_token,
-                    owner=owner_token,
-                    image_id=job.image_id,
-                )
-            except (OperationError, TimeoutError, OSError) as error:
-                operation_status = 1
-                operation_diagnostics.append(
-                    f"CLEANUP UNCONFIRMED: {error}. "
-                    f"Retained recovery record: {operation_directory}/recovery.txt"
-                )
-            else:
-                if not container_create_confirmed:
+            discard_operation_directory = not container_creation_requested
+
+            if container_creation_requested:
+                try:
+                    cleanup(
+                        docker=docker,
+                        token=operation_token,
+                        owner=owner_token,
+                        image_id=job.image_id,
+                    )
+                except (OperationError, TimeoutError, OSError) as error:
                     operation_status = 1
                     operation_diagnostics.append(
-                        "Create was not confirmed; retain the receipt even if discovery currently finds nothing. "
-                        f"Recovery: {operation_directory}/recovery.txt"
+                        f"CLEANUP UNCONFIRMED: {error}. "
+                        f"Retained recovery record: {operation_directory}/recovery.txt"
                     )
                 else:
-                    try:
-                        for child in operation_directory.iterdir():
-                            child.unlink()
-                        operation_directory.rmdir()
-                        recovery_directory = None
-                    except OSError as error:
+                    if not container_create_confirmed:
                         operation_status = 1
-                        operation_diagnostics.append(f"Cannot remove operation record: {operation_directory = }, {error = }")
+                        operation_diagnostics.append(
+                            "Create was not confirmed; retain the receipt even if discovery currently finds nothing. "
+                            f"Recovery: {operation_directory}/recovery.txt"
+                        )
+                    else:
+                        discard_operation_directory = True
+
+            if discard_operation_directory:
+                try:
+                    for child in operation_directory.iterdir():
+                        child.unlink()
+                    operation_directory.rmdir()
+                    recovery_directory = None
+                except OSError as error:
+                    operation_status = 1
+                    operation_diagnostics.append(
+                        f"Cannot remove operation record: {operation_directory = }, {error = }"
+                    )
 
     # The inspected workload exit takes precedence. Retain earlier evidence
     # instead of overwriting it when several failures occurred.
