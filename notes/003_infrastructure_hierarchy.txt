@@ -1,0 +1,135 @@
+Hello World: long-term infrastructure hierarchy
+================================================
+
+10 November 2026
+Status: structural decision and migration plan, written before implementation.
+Authority: notes/000_portable_engineering_practices.txt (§§ A3, A6–A9, C1, C3–C4);
+notes/001_main_and_example_branches.txt (§§ 1–2, 6).
+Historical a priori checker plan: notes/002_repository_checker_implementation_plan.txt.
+
+The problem
+-----------
+
+The first implementation placed a generic Docker finite-job implementation
+under tools/container, a project-specific command under tools/repository,
+and a test-framework entry point under tools/repository as well. This mixes
+three different ownership boundaries. Names such as checker, operation and
+runner cannot establish what a file is responsible for.
+
+Long-term hierarchy, now
+------------------------
+
+    Makefile
+    infrastructure/
+        __init__.py
+        docker/
+            __init__.py
+            client.py               # selected engine, sanitized CLI, image admission
+            finite_job.py           # one bounded container: policy, ownership, retirement
+        testing/
+            __init__.py
+            unittest_runner.py      # optional unittest execution/reporting adapter
+        commands/
+            __init__.py
+            repository.py           # make repository/* commands; inputs, image, choice
+    tests/
+        infrastructure/
+            __init__.py
+            test_repository_execution.py   # mocked end-to-end Docker/command contract
+            test_unittest_runner.py        # test-framework results and failure-last
+        repository/
+            __init__.py
+            test_make.py            # Make's public contract
+    notes/
+        000_...
+        001_...
+        002_...
+        003_...
+
+Do not create empty placeholder directories. A future need introduces a
+coherent capability, with implementation and tests on main. New domains may
+include infrastructure/dependencies/, infrastructure/artifacts/ and
+infrastructure/deployment/ once real workflows need them.
+
+Ownership and dependency direction
+----------------------------------
+
+infrastructure/docker/client.py:
+    Resolve exactly one explicitly selected local rootless Docker engine.
+    Run a sanitized, bounded Docker CLI, admit images, return observed
+    results. It knows nothing about project roots, tests, build artifacts,
+    job configurations or test frameworks.
+
+infrastructure/docker/finite_job.py:
+    Consume a selected Docker client and a finite-job description (verified
+    image ID, entrypoint/argv, read-only input mounts and environment).
+    Apply and check isolation, create/attach/inspect, retire owned resources,
+    preserve diagnostics/recovery on uncertainty. It does not decide which
+    project or test suite is being run. Long-lived services, builders and
+    privileged acquisition are distinct roles with explicit policy, not
+    booleans smuggled into this job.
+
+infrastructure/testing/unittest_runner.py:
+    A replaceable test-execution adapter. It accepts ordinary unittest
+    discovery options and prints full failures at the end. It knows nothing
+    about Docker, source mount policy, image acquisition or Make. Replacing
+    it with an installed unittest-parallel CLI affects the selected image
+    and command, not the Docker executor. Do not introduce an abstract
+    cross-framework test interface until a real second implementation
+    needs common behavior.
+
+infrastructure/commands/repository.py:
+    Entry point for make repository/check and repository/image/acquire.
+    Owns the repo root admission/inventory, pinned checker image, concrete
+    unittest command, and reporting of this command's result. It composes
+    the Docker finite-job capability with the selected test executable.
+    No container lifecycle or unittest result handling is implemented here.
+
+    Make -> infrastructure.commands.repository -> docker.client
+                                               -> docker.finite_job
+    repository command -> testing.unittest_runner (by container argv only)
+    docker.finite_job -> docker.client
+
+No imports from Docker infrastructure back into commands or testing. Tests
+may import the production layers they exercise; production does not import
+tests. Do not maintain module aliases for old experimental internal paths.
+
+Branch and tests policy
+-----------------------
+
+main owns all the infrastructure above; example/* branches contain actual
+applications and configuration, without copies or overrides of common
+machinery. Discovery starts at tests/ rather than tests/repository/ so
+contracts placed in tests/infrastructure/ are not silently skipped.
+An empty suite is a failure. Installed-package and live-engine qualification
+remain separate from fast source and mocked-boundary checks.
+
+A future shared test-selection capability belongs in infrastructure/testing/
+and may accept a framework-specific Command; Make command dispatch belongs
+in infrastructure/commands/. A future Docker image build, controlled network
+fetch or retained service is not a mode of finite_job: give its different
+security/ownership grants a different named entry point sharing docker.client.
+
+Implementation scope and acceptance
+-----------------------------------
+
+Migrate current implementations without changing their public Make commands
+or weakening confinement. Split the Docker client from finite-job ownership,
+move the unittest-specific adapter to testing, and move the repository
+command adapter to commands. Rename tests to describe the contract rather
+than the obsolete filename. Remove old paths entirely.
+
+Update checker read-only root inventory from tools to infrastructure and
+update in-container command and unittest discovery to cover tests/ as a whole.
+These are intentional behavior changes. All others are structural.
+
+Acceptance: public Make targets unchanged; import graph has the direction
+above; current tests are discoverable from tests/; the parallel alternative
+is a changed executable/argv plus a pinned image, without Docker changes;
+source mounts omit .git and secrets; cleanup and failure-last promises
+remain unchanged. Inspect GitHub tree for stale paths. Do not claim live
+Docker qualification when only static or mocked work is available.
+
+Note 002 remains the original historical plan; do not edit it to hide
+subsequent architectural changes. State deviations and actual verification
+at the completion of this migration.
