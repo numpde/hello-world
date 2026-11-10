@@ -443,7 +443,7 @@ class RepositoryContainerContracts(unittest.TestCase):
         self.assertIn(f"--filter label={finite_job.OPERATION_LABEL}=", recovery_text)
         self.assertIn("container.cid", recovery_text)
         self.assertNotIn("<context>", recovery_text)
-        self.addCleanup(lambda: shutil.rmtree(Path(recovery).parent))
+        self.addCleanup(shutil.rmtree, Path(recovery).parent)
 
     def test_unconfirmed_cleanup_retains_receipt(self):
         """Keep ownership evidence when Docker refuses to remove the container."""
@@ -454,7 +454,7 @@ class RepositoryContainerContracts(unittest.TestCase):
         self.assertIn("CLEANUP UNCONFIRMED", errors)
         path = Path(errors.split("Retained recovery record: ", 1)[1].splitlines()[0])
         self.assertTrue(path.is_file())
-        self.addCleanup(lambda: shutil.rmtree(path.parent))
+        self.addCleanup(shutil.rmtree, path.parent)
 
     def test_ownership_mismatch_prohibits_deletion(self):
         """A search-label match must never authorize deleting an unrelated container."""
@@ -464,7 +464,7 @@ class RepositoryContainerContracts(unittest.TestCase):
         self.assertTrue(self.executor.container_present)
         self.assertIn("Refusing to remove", errors)
         path = Path(errors.split("Retained recovery record: ", 1)[1].splitlines()[0])
-        self.addCleanup(lambda: shutil.rmtree(path.parent))
+        self.addCleanup(shutil.rmtree, path.parent)
 
     def test_parallel_test_command_is_an_adapter_choice(self):
         """Switching to unittest-parallel must change only the job command, not its container grants."""

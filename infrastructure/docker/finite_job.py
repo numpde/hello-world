@@ -266,15 +266,19 @@ def verify_container_posture(
         confinement_findings.append(f"{observed_nofile_limits = }, {expected_nofile_limit = }")
 
     observed_tmpfs_configuration = observed_host_configuration.get("Tmpfs")
-    observed_tmp_options = observed_tmpfs_configuration.get("/tmp") if isinstance(observed_tmpfs_configuration, dict) else None
-    expected_tmp_options = set(TMPFS_OPTIONS)
+    observed_tmpfs_destinations = (
+        set(observed_tmpfs_configuration) if isinstance(observed_tmpfs_configuration, dict) else None
+    )
+    if observed_tmpfs_destinations != {"/tmp"}:
+        confinement_findings.append(f"Unexpected {observed_tmpfs_destinations = }")
 
-    if not isinstance(observed_tmpfs_configuration, dict) or set(observed_tmpfs_configuration) != {"/tmp"}:
-        confinement_findings.append(f"Unexpected {observed_tmpfs_configuration = }")
+    reported_tmp_options = observed_tmpfs_configuration.get("/tmp") if isinstance(observed_tmpfs_configuration, dict) else None
+    observed_tmp_options = set(reported_tmp_options.split(",")) if isinstance(reported_tmp_options, str) else None
+    expected_tmp_options = set(TMPFS_OPTIONS)
 
     # Allow Docker to reorder options, but not to add contradictory permissions
     # or a second size declaration.
-    if not isinstance(observed_tmp_options, str) or set(observed_tmp_options.split(",")) != expected_tmp_options:
+    if observed_tmp_options != expected_tmp_options:
         confinement_findings.append(f"{observed_tmp_options = }, {expected_tmp_options = }")
 
     # Docker may also include --tmpfs /tmp in Mounts. Other mounts, including
@@ -399,8 +403,7 @@ def cleanup(docker: DockerClient, token: str, owner: str, image_id: str) -> None
     for container_id in owned_container_ids:
         removal_result = docker.call("rm", "--force", "--volumes", container_id, timeout=remaining_cleanup_timeout())
         if removal_result.status != 0:
-            removal_status = removal_result.status
-            removal_failures.append(f"{container_id = }, {removal_status = }")
+            removal_failures.append(f"{container_id = }, {removal_result.status = }")
 
     remaining_container_ids = owned_containers(docker, token, owner, image_id, timeout=remaining_cleanup_timeout)
 
