@@ -12,11 +12,12 @@ import contextlib
 import io
 import json
 import os
+import shutil
 import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from infrastructure.docker import client as docker_client
 from infrastructure.docker import finite_job
@@ -272,6 +273,47 @@ class RepositoryContainerContracts(unittest.TestCase):
         self.assertIn("attachment timed out", errors)
         self.assertFalse(self.executor.container_present)
 
+    def test_work_deadline_during_discovery_still_retires_container(self):
+        """Work expiry after create cannot consume the separate cleanup budget."""
+        observed_times = iter((0.0, 0.0, finite_job.WORK_TIMEOUT + 1.0))
+        with patch.object(
+            finite_job.time,
+            "monotonic",
+            side_effect=lambda: next(observed_times, finite_job.WORK_TIMEOUT + 1.0),
+        ):
+            (operation_status, _, errors) = self.execute()
+
+        self.assertEqual(operation_status, 1)
+        self.assertIn("Docker work budget exhausted", errors)
+        self.assertFalse(self.executor.container_present)
+        self.assertTrue(any("create" in argv for (argv, _, _) in self.executor.docker_calls))
+
+        recovery_line = next(line for line in errors.splitlines() if "Recovery: " in line)
+        recovery_receipt = Path(recovery_line.split("Recovery: ", 1)[1])
+        self.assertTrue(recovery_receipt.is_file())
+        self.addCleanup(shutil.rmtree, recovery_receipt.parent)
+
+    def test_expired_work_budget_never_requests_create(self):
+        """A timeout before Docker create leaves no daemon resources or recovery claim."""
+        with patch.object(finite_job, "WORK_TIMEOUT", 0):
+            (operation_status, _, errors) = self.execute()
+
+        self.assertEqual(operation_status, 1)
+        self.assertIn("Docker work budget exhausted", errors)
+        self.assertNotIn("Retained operation", errors)
+        self.assertFalse(any("create" in argv for (argv, _, _) in self.executor.docker_calls))
+
+    def test_receipt_write_failure_does_not_claim_recovery(self):
+        """No daemon mutation has occurred if the receipt cannot be written."""
+        with patch.object(finite_job, "write_receipt", side_effect=OSError("receipt storage unavailable")):
+            (operation_status, _, errors) = self.execute()
+
+        self.assertEqual(operation_status, 1)
+        self.assertIn("receipt storage unavailable", errors)
+        self.assertNotIn("Retained operation", errors)
+        self.assertFalse(any("create" in argv for (argv, _, _) in self.executor.docker_calls))
+        self.assertFalse(any("ps" in argv for (argv, _, _) in self.executor.docker_calls))
+
     def test_engine_that_ignores_confinement_cannot_start_checker(self):
         """A created container with broader network access must be rejected before it starts."""
         self.executor.host_configuration_overrides = {"NetworkMode": "bridge"}
@@ -357,7 +399,7 @@ class RepositoryContainerContracts(unittest.TestCase):
                         if "Recovery: " in line)
         self.assertTrue(Path(recovery).is_file())
         self.assertIn(f"Image ID: {repository.CHECKER_IMAGE_ID}", Path(recovery).read_text())
-        self.addCleanup(lambda: __import__("shutil").rmtree(Path(recovery).parent))
+        self.addCleanup(lambda: shutil.rmtree(Path(recovery).parent))
 
     def test_unconfirmed_cleanup_retains_receipt(self):
         """Keep ownership evidence when Docker refuses to remove the container."""
@@ -368,7 +410,7 @@ class RepositoryContainerContracts(unittest.TestCase):
         self.assertIn("CLEANUP UNCONFIRMED", errors)
         path = Path(errors.split("Retained recovery record: ", 1)[1].splitlines()[0])
         self.assertTrue(path.is_file())
-        self.addCleanup(lambda: __import__("shutil").rmtree(path.parent))
+        self.addCleanup(lambda: shutil.rmtree(path.parent))
 
     def test_ownership_mismatch_prohibits_deletion(self):
         """A search-label match must never authorize deleting an unrelated container."""
@@ -378,7 +420,7 @@ class RepositoryContainerContracts(unittest.TestCase):
         self.assertTrue(self.executor.container_present)
         self.assertIn("Refusing to remove", errors)
         path = Path(errors.split("Retained recovery record: ", 1)[1].splitlines()[0])
-        self.addCleanup(lambda: __import__("shutil").rmtree(path.parent))
+        self.addCleanup(lambda: shutil.rmtree(path.parent))
 
     def test_parallel_test_command_is_an_adapter_choice(self):
         """Switching to unittest-parallel must change only the job command, not its container grants."""
@@ -492,6 +534,21 @@ class RepositoryContainerContracts(unittest.TestCase):
                 with self.assertRaises(docker_client.OperationError):
                     finite_job.container_arguments(invalid_job, "operation", "owner")
 
+
+    def test_cleanup_refuses_subsecond_remaining_budget(self):
+        """Cleanup may not round an insufficient time allowance up to one second."""
+        unused_docker = Mock()
+        observed_times = iter((0.0, finite_job.CLEANUP_TIMEOUT - 0.5))
+
+        with patch.object(
+            finite_job.time,
+            "monotonic",
+            side_effect=lambda: next(observed_times, finite_job.CLEANUP_TIMEOUT - 0.5),
+        ):
+            with self.assertRaisesRegex(TimeoutError, "cleanup budget exhausted"):
+                finite_job.cleanup(unused_docker, "operation", "owner", repository.CHECKER_IMAGE_ID)
+
+        unused_docker.call.assert_not_called()
 
     def test_full_ids_only_and_no_collision(self):
         """Cleanup requires unique full IDs; shortened or duplicated IDs are not safe deletion targets."""
