@@ -98,42 +98,43 @@ def container_arguments(job: Job, token: str, owner: str) -> list[str]:
     if not re.fullmatch(r"sha256:[0-9a-f]{64}", job.image_id):
         raise OperationError(f"A verified immutable image ID is required: {job.image_id = }")
 
-    executable = job.command.executable
-    if not executable or (not executable.startswith("/") and "/" in executable):
-        raise OperationError(f"Container entrypoint must be a name or absolute path: {executable = }")
+    container_entrypoint = job.command.executable
+    if not container_entrypoint or (not container_entrypoint.startswith("/") and "/" in container_entrypoint):
+        raise OperationError(f"Expected bare name or absolute path for {container_entrypoint = }")
 
     if not job.workdir.startswith("/"):
-        raise OperationError(f"Container workdir must be absolute: {job.workdir = }")
+        raise OperationError(f"Expected absolute path for {job.workdir = }")
     if any(character in job.workdir for character in ("\n", "\r", "\x00")):
-        raise OperationError(f"Control character in container workdir: {job.workdir = }")
+        raise OperationError(f"Control character in container {job.workdir = }")
 
     mount_arguments = []
     mounted_targets = set()
 
     for mount in job.mounts:
-        source_path = str(mount.source)
+        mount_source_path = str(mount.source)
 
         if not mount.source.is_absolute() or not mount.target.startswith("/"):
-            raise OperationError(f"Mount paths must be absolute: {mount.source = }, {mount.target = }")
+            raise OperationError(f"Expected absolute paths for {mount.source = }, {mount.target = }")
 
         # Docker splits --mount options on commas. A comma or control character
         # inside a path could change which mount options Docker interprets.
-        if any(character in source_path + mount.target for character in (",", "\n", "\r", "\x00")):
-            raise OperationError(f"Invalid mount path: {mount.source = }, {mount.target = }")
+        if any(character in mount_source_path + mount.target for character in (",", "\n", "\r", "\x00")):
+            raise OperationError(f"Comma or control character in {mount.source = }, {mount.target = }")
 
         if mount.target in mounted_targets:
-            raise OperationError(f"Duplicate container destination: {mount.target = }")
+            raise OperationError(f"Duplicate {mount.target = }")
 
         mounted_targets.add(mount.target)
-        mount_arguments.extend(["--mount", f"type=bind,source={source_path},target={mount.target},readonly"])
+        mount_arguments.extend(["--mount", f"type=bind,source={mount_source_path},target={mount.target},readonly"])
 
     # The value may contain credentials; reject malformed declarations without
-    # echoing the supplied setting into diagnostic output.
+    # echoing the supplied environment_setting into diagnostic output.
     environment_arguments = []
-    for setting in job.environment:
-        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", setting, flags=re.DOTALL) or "\x00" in setting:
-            raise OperationError("Malformed container environment declaration (expected NAME=value without NUL)")
-        environment_arguments.append(f"--env={setting}")
+
+    for environment_setting in job.environment:
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", environment_setting, flags=re.DOTALL) or "\x00" in environment_setting:
+            raise OperationError("Expected NAME=value without NUL in container environment")
+        environment_arguments.append(f"--env={environment_setting}")
 
     return [
         "create", "--pull=never",
@@ -153,7 +154,7 @@ def container_arguments(job: Job, token: str, owner: str) -> list[str]:
         # the command arguments follow it and cannot change Docker grants.
         f"--workdir={job.workdir}", "--platform=linux/amd64",
         *environment_arguments, *mount_arguments,
-        f"--entrypoint={executable}", job.image_id, *job.command.arguments,
+        f"--entrypoint={container_entrypoint}", job.image_id, *job.command.arguments,
     ]
 
 
@@ -164,27 +165,27 @@ def verify_container_posture(docker: DockerClient, identifier: str, job: Job) ->
     storage and every source mount. A requested flag alone is not proof that
     the engine applied the restriction.
     """
-    inspection_json = checked_result(
+    container_inspection_json = checked_result(
         result=docker.call("container", "inspect", "--format", "{{json .}}", identifier),
-        purpose="Container confinement inspection",
+        purpose="Container confinement container_inspection",
     )
 
     try:
-        inspection = json.loads(inspection_json)
-        host_configuration = inspection["HostConfig"]
-        container_configuration = inspection["Config"]
-        reported_mounts = inspection["Mounts"]
+        container_inspection = json.loads(container_inspection_json)
+        observed_host_configuration = container_inspection["HostConfig"]
+        observed_container_configuration = container_inspection["Config"]
+        observed_container_mounts = container_inspection["Mounts"]
     except (KeyError, TypeError, ValueError) as error:
         raise OperationError("Docker returned malformed confinement data") from error
 
     if (
-        not isinstance(host_configuration, dict)
-        or not isinstance(container_configuration, dict)
-        or not isinstance(reported_mounts, list)
+        not isinstance(observed_host_configuration, dict)
+        or not isinstance(observed_container_configuration, dict)
+        or not isinstance(observed_container_mounts, list)
     ):
         raise OperationError("Docker returned malformed confinement types")
 
-    expected_configuration = {
+    expected_host_configuration = {
         "NetworkMode": "none",
         "ReadonlyRootfs": True,
         "Privileged": False,
@@ -193,62 +194,62 @@ def verify_container_posture(docker: DockerClient, identifier: str, job: Job) ->
         "MemorySwap": 536_870_912,
         "PidsLimit": 64,
     }
-    violations = []
-    for (field_name, expected_value) in expected_configuration.items():
-        observed_value = host_configuration.get(field_name)
-        if observed_value != expected_value:
-            violations.append(f"{field_name}: {observed_value = }, {expected_value = }")
+    confinement_findings = []
+    for (host_field, expected_host_value) in expected_host_configuration.items():
+        observed_host_value = observed_host_configuration.get(host_field)
+        if observed_host_value != expected_host_value:
+            confinement_findings.append(f"{host_field = }, {observed_host_value = }, {expected_host_value = }")
 
     expected_user = "65532:65532"
-    observed_user = container_configuration.get("User")
+    observed_user = observed_container_configuration.get("User")
     if observed_user != expected_user:
-        violations.append(f"user: {observed_user = }, {expected_user = }")
+        confinement_findings.append(f"{observed_user = }, {expected_user = }")
 
-    dropped_capabilities = host_configuration.get("CapDrop")
-    if not isinstance(dropped_capabilities, list) or not any(
+    observed_dropped_capabilities = observed_host_configuration.get("CapDrop")
+    if not isinstance(observed_dropped_capabilities, list) or not any(
         isinstance(capability, str) and capability.lower() == "all"
-        for capability in dropped_capabilities
+        for capability in observed_dropped_capabilities
     ):
-        violations.append(f"capabilities: {dropped_capabilities = }")
+        confinement_findings.append(f"Missing all-capabilities flag in {observed_dropped_capabilities = }")
 
-    security_options = host_configuration.get("SecurityOpt")
-    if not isinstance(security_options, list) or "no-new-privileges:true" not in security_options:
-        violations.append(f"no-new-privileges: {security_options = }")
+    observed_security_options = observed_host_configuration.get("SecurityOpt")
+    if not isinstance(observed_security_options, list) or "no-new-privileges:true" not in observed_security_options:
+        confinement_findings.append(f"Missing no-new-privileges in {observed_security_options = }")
 
-    logging_configuration = host_configuration.get("LogConfig")
-    if not isinstance(logging_configuration, dict) or logging_configuration.get("Type") != "none":
-        violations.append(f"logging: {logging_configuration = }")
+    observed_logging_configuration = observed_host_configuration.get("LogConfig")
+    if not isinstance(observed_logging_configuration, dict) or observed_logging_configuration.get("Type") != "none":
+        confinement_findings.append(f"Expected disabled logging in {observed_logging_configuration = }")
 
-    temporary_filesystems = host_configuration.get("Tmpfs")
-    observed_tmp_options = temporary_filesystems.get("/tmp") if isinstance(temporary_filesystems, dict) else None
+    observed_tmpfs_configuration = observed_host_configuration.get("Tmpfs")
+    observed_tmp_options = observed_tmpfs_configuration.get("/tmp") if isinstance(observed_tmpfs_configuration, dict) else None
     expected_tmp_options = {"rw", "nosuid", "nodev", "noexec", "size=67108864"}
 
     if (
         not isinstance(observed_tmp_options, str)
         or not expected_tmp_options.issubset(observed_tmp_options.split(","))
     ):
-        violations.append(f"temporary storage: {observed_tmp_options = }, {expected_tmp_options = }")
+        confinement_findings.append(f"Unconfined /tmp: {observed_tmp_options = }, {expected_tmp_options = }")
 
     # Compare the daemon's complete mount list, not just the requested binds.
     # An additional read-only mount is still a grant this job did not request.
     expected_bind_mounts = {(str(mount.source), mount.target) for mount in job.mounts}
     observed_bind_mounts = set()
 
-    for observed_mount in reported_mounts:
+    for observed_mount in observed_container_mounts:
         if (
             not isinstance(observed_mount, dict)
             or observed_mount.get("Type") != "bind"
             or observed_mount.get("RW") is not False
         ):
-            violations.append(f"source mount type or writable permission: {observed_mount = }")
+            confinement_findings.append(f"Unexpected writable or non-bind {observed_mount = }")
             continue
         observed_bind_mounts.add((observed_mount.get("Source"), observed_mount.get("Destination")))
 
     if observed_bind_mounts != expected_bind_mounts:
-        violations.append(f"source mount inventory: {observed_bind_mounts = }, {expected_bind_mounts = }")
+        confinement_findings.append(f"Mount inventory differs: {observed_bind_mounts = }, {expected_bind_mounts = }")
 
-    if violations:
-        raise OperationError(f"Docker did not apply required confinement: {', '.join(violations)}")
+    if confinement_findings:
+        raise OperationError(f"Docker did not apply required confinement: {', '.join(confinement_findings)}")
 
 
 def container_ids(raw: str) -> list[str]:
@@ -280,7 +281,7 @@ def owned_containers(
     image ID and both ownership labels must also agree. The timeout callback
     supplies the time remaining within the caller's cleanup budget.
     """
-    container_listing = checked_result(
+    candidate_container_listing = checked_result(
         result=docker.call(
             "ps", "--all", "--quiet", "--no-trunc",
             "--filter", f"label={OPERATION_LABEL}={token}",
@@ -289,33 +290,33 @@ def owned_containers(
         purpose="Owned container discovery",
     )
 
-    candidate_ids = container_ids(container_listing)
+    candidate_container_ids = container_ids(candidate_container_listing)
 
-    for candidate_id in candidate_ids:
-        inspection_json = checked_result(
+    for candidate_container_id in candidate_container_ids:
+        candidate_inspection_json = checked_result(
             result=docker.call(
-                "container", "inspect", "--format", "{{json .}}", candidate_id,
+                "container", "inspect", "--format", "{{json .}}", candidate_container_id,
                 timeout=timeout(),
             ),
             purpose="Owned container verification",
         )
 
         try:
-            inspection = json.loads(inspection_json)
-            ownership_labels = inspection["Config"]["Labels"]
-            ownership_verified = (
-                inspection["Id"] == candidate_id
-                and inspection["Image"] == image_id
-                and ownership_labels[OPERATION_LABEL] == token
-                and ownership_labels[IDENTITY_LABEL] == owner
+            candidate_inspection = json.loads(candidate_inspection_json)
+            candidate_ownership_labels = candidate_inspection["Config"]["Labels"]
+            candidate_ownership_verified = (
+                candidate_inspection["Id"] == candidate_container_id
+                and candidate_inspection["Image"] == image_id
+                and candidate_ownership_labels[OPERATION_LABEL] == token
+                and candidate_ownership_labels[IDENTITY_LABEL] == owner
             )
         except (KeyError, TypeError, ValueError):
-            ownership_verified = False
+            candidate_ownership_verified = False
 
-        if not ownership_verified:
-            raise OperationError(f"Refusing to remove container with inconsistent ownership: {candidate_id = }")
+        if not candidate_ownership_verified:
+            raise OperationError(f"Refusing to remove container with inconsistent ownership: {candidate_container_id = }")
 
-    return candidate_ids
+    return candidate_container_ids
 
 
 def cleanup(docker: DockerClient, token: str, owner: str, image_id: str) -> None:
@@ -326,23 +327,23 @@ def cleanup(docker: DockerClient, token: str, owner: str, image_id: str) -> None
     """
     cleanup_deadline = time.monotonic() + CLEANUP_TIMEOUT
 
-    def remaining_time() -> int:
+    def remaining_cleanup_timeout() -> int:
         """Bound each cleanup request by the time left for the whole cleanup."""
         seconds = cleanup_deadline - time.monotonic()
         if seconds <= 0:
             raise TimeoutError("Docker cleanup budget exhausted")
         return min(CLIENT_TIMEOUT, max(1, int(seconds)))
 
-    owned_container_ids = owned_containers(docker, token, owner, image_id, timeout=remaining_time)
+    owned_container_ids = owned_containers(docker, token, owner, image_id, timeout=remaining_cleanup_timeout)
 
     removal_failures = []
     for container_id in owned_container_ids:
-        removal_result = docker.call("rm", "--force", "--volumes", container_id, timeout=remaining_time())
+        removal_result = docker.call("rm", "--force", "--volumes", container_id, timeout=remaining_cleanup_timeout())
         if removal_result.status != 0:
             removal_status = removal_result.status
             removal_failures.append(f"{container_id = }, {removal_status = }")
 
-    remaining_container_ids = owned_containers(docker, token, owner, image_id, timeout=remaining_time)
+    remaining_container_ids = owned_containers(docker, token, owner, image_id, timeout=remaining_cleanup_timeout)
 
     if remaining_container_ids or removal_failures:
         raise OperationError(
@@ -383,15 +384,15 @@ def protected_cleanup():
     signal from skipping cleanup and restores the previous handlers afterward.
     """
     terminal_signals = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
-    previous_handlers = {}
+    previous_signal_handlers = {}
     try:
         # Installing handlers changes process state. Restore those already
         # changed even if installing a later handler raises an exception.
         for signal_number in terminal_signals:
-            previous_handlers[signal_number] = signal.signal(signal_number, signal.SIG_IGN)
+            previous_signal_handlers[signal_number] = signal.signal(signal_number, signal.SIG_IGN)
         yield
     finally:
-        for (signal_number, previous_handler) in previous_handlers.items():
+        for (signal_number, previous_handler) in previous_signal_handlers.items():
             signal.signal(signal_number, previous_handler)
 
 
@@ -405,14 +406,14 @@ def run_container(docker: DockerClient, context: str, job: Job) -> Outcome:
     """
     operation_token = secrets.token_hex(16)
     owner_token = secrets.token_hex(16)
-    create_arguments = container_arguments(job=job, token=operation_token, owner=owner_token)
+    docker_create_arguments = container_arguments(job=job, token=operation_token, owner=owner_token)
     operation_directory = Path(tempfile.mkdtemp(prefix="hello-world-operation-"))
     recovery_directory: Path | None = operation_directory
-    create_confirmed = False
+    container_create_confirmed = False
 
     job_failure: str | None = None
     job_output = ""
-    diagnostics = []
+    operation_diagnostics = []
     operation_status = 0
 
     try:
@@ -429,7 +430,7 @@ def run_container(docker: DockerClient, context: str, job: Job) -> Outcome:
         create_command = [
             "create",
             "--cidfile", str(cid_receipt),
-            *create_arguments[1:],
+            *docker_create_arguments[1:],
         ]
         reported_container_id = checked_result(
             result=docker.call(*create_command),
@@ -458,12 +459,12 @@ def run_container(docker: DockerClient, context: str, job: Job) -> Outcome:
                 f"Docker created an unexpected container identity: {observed_container_ids = }, {container_id = }"
             )
 
-        create_confirmed = True
+        container_create_confirmed = True
         verify_container_posture(docker, container_id, job)
 
-        attachment_result = docker.call("start", "--attach", container_id, timeout=WORK_TIMEOUT)
-        job_output = attachment_result.output
-        if attachment_result.truncated:
+        docker_attachment_result = docker.call("start", "--attach", container_id, timeout=WORK_TIMEOUT)
+        job_output = docker_attachment_result.output
+        if docker_attachment_result.truncated:
             job_failure = f"Container output exceeded {MAX_OUTPUT} bytes; tail retained"
 
         # The attachment client may finish while the workload is still running.
@@ -483,8 +484,8 @@ def run_container(docker: DockerClient, context: str, job: Job) -> Outcome:
         if type(container_exit_code) is not int or not 0 <= container_exit_code <= 255:
             raise OperationError("Container stopped without a verified final exit status")
 
-        if attachment_result.status != 0:
-            job_failure = f"Docker attachment failed ({attachment_result.status = })"
+        if docker_attachment_result.status != 0:
+            job_failure = f"Docker attachment failed ({docker_attachment_result.status = })"
         if container_exit_code != 0:
             # The command adapter currently recognizes this message prefix.
             job_failure = f"Container exited with status {container_exit_code}"
@@ -504,14 +505,14 @@ def run_container(docker: DockerClient, context: str, job: Job) -> Outcome:
                 )
             except (OperationError, TimeoutError, OSError) as error:
                 operation_status = 1
-                diagnostics.append(
+                operation_diagnostics.append(
                     f"CLEANUP UNCONFIRMED: {error}. "
                     f"Retained recovery record: {operation_directory}/recovery.txt"
                 )
             else:
-                if not create_confirmed:
+                if not container_create_confirmed:
                     operation_status = 1
-                    diagnostics.append(
+                    operation_diagnostics.append(
                         "Create was not confirmed; retain the receipt even if discovery currently finds nothing. "
                         f"Recovery: {operation_directory}/recovery.txt"
                     )
@@ -523,17 +524,17 @@ def run_container(docker: DockerClient, context: str, job: Job) -> Outcome:
                         recovery_directory = None
                     except OSError as error:
                         operation_status = 1
-                        diagnostics.append(f"Cannot remove operation record: {operation_directory = }, {error = }")
+                        operation_diagnostics.append(f"Cannot remove operation record: {operation_directory = }, {error = }")
 
     if job_failure is not None:
         operation_status = 1
     if recovery_directory is not None:
-        diagnostics.append(f"Retained operation: {recovery_directory}")
+        operation_diagnostics.append(f"Retained operation: {recovery_directory}")
 
     return Outcome(
         status=operation_status,
         output=job_output,
         failure=job_failure,
-        diagnostics=tuple(diagnostics),
+        diagnostics=tuple(operation_diagnostics),
         recovery=recovery_directory,
     )

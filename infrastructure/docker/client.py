@@ -55,20 +55,20 @@ class Executor(Protocol):
 
 
 class NativeExecutor:
-    """Run a client without blocking on its output or leaving it running.
+    """Run a client without blocking on its captured_output or leaving it running.
 
-The output buffer holds at most the last MAX_OUTPUT bytes. If the process
-outlives its deadline, terminate its process group; callers must separately
+The captured_output buffer holds at most the last MAX_OUTPUT bytes. If the docker_client_process
+outlives its client_deadline, terminate its docker_client_process group; callers must separately
 check any daemon-side effects."""
 
     def run(self, argv: list[str], env: dict[str, str], timeout: int) -> Result:
-        """Use the supplied environment and deadline for one subprocess.
+        """Use the supplied environment and client_deadline for one subprocess.
         
-        Standard output and error share a bounded buffer. Timeout raises after
-        attempting to stop the local process; it is not a Docker cleanup result."""
+        Standard captured_output and error share a bounded buffer. Timeout raises after
+        attempting to stop the local docker_client_process; it is not a Docker cleanup result."""
         import selectors
 
-        process = subprocess.Popen(
+        docker_client_process = subprocess.Popen(
             argv,
             env=env,
             stdin=subprocess.DEVNULL,
@@ -76,48 +76,48 @@ check any daemon-side effects."""
             stderr=subprocess.STDOUT,
             start_new_session=True,
         )
-        output = bytearray()
+        captured_output = bytearray()
         truncated = False
-        deadline = time.monotonic() + timeout
+        client_deadline = time.monotonic() + timeout
         try:
-            with selectors.DefaultSelector() as poller:
-                assert process.stdout is not None
-                poller.register(process.stdout, selectors.EVENT_READ)
-                while poller.get_map():
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
+            with selectors.DefaultSelector() as output_selector:
+                assert docker_client_process.stdout is not None
+                output_selector.register(docker_client_process.stdout, selectors.EVENT_READ)
+                while output_selector.get_map():
+                    remaining_seconds = client_deadline - time.monotonic()
+                    if remaining_seconds <= 0:
                         raise TimeoutError(f"Docker client exceeded {timeout}s")
-                    for key, _ in poller.select(min(remaining, 0.5)):
-                        chunk = os.read(key.fileobj.fileno(), 65536)
-                        if not chunk:
-                            poller.unregister(key.fileobj)
+                    for key, _ in output_selector.select(min(remaining_seconds, 0.5)):
+                        output_chunk = os.read(key.fileobj.fileno(), 65536)
+                        if not output_chunk:
+                            output_selector.unregister(key.fileobj)
                             continue
-                        output.extend(chunk)
-                        if len(output) > MAX_OUTPUT:
-                            del output[: len(output) - MAX_OUTPUT]
+                        captured_output.extend(output_chunk)
+                        if len(captured_output) > MAX_OUTPUT:
+                            del captured_output[: len(captured_output) - MAX_OUTPUT]
                             truncated = True
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
+            remaining_seconds = client_deadline - time.monotonic()
+            if remaining_seconds <= 0:
                 raise TimeoutError(f"Docker client exceeded {timeout}s")
-            status = process.wait(timeout=remaining)
-            return Result(status, output.decode("utf-8", errors="replace"), truncated)
+            client_exit_status = docker_client_process.wait(timeout=remaining_seconds)
+            return Result(client_exit_status, captured_output.decode("utf-8", errors="replace"), truncated)
         finally:
-            if process.poll() is None:
+            if docker_client_process.poll() is None:
                 # A dead client does not prove that Docker stopped its container.
                 try:
-                    os.killpg(process.pid, signal.SIGTERM)
+                    os.killpg(docker_client_process.pid, signal.SIGTERM)
                 except ProcessLookupError:
                     pass
                 try:
-                    process.wait(timeout=2)
+                    docker_client_process.wait(timeout=2)
                 except subprocess.TimeoutExpired:
                     try:
-                        os.killpg(process.pid, signal.SIGKILL)
+                        os.killpg(docker_client_process.pid, signal.SIGKILL)
                     except ProcessLookupError:
                         pass
-                    process.wait(timeout=2)
-            if process.stdout is not None:
-                process.stdout.close()
+                    docker_client_process.wait(timeout=2)
+            if docker_client_process.stdout is not None:
+                docker_client_process.stdout.close()
 
 
 def clean_environment(original: dict[str, str]) -> dict[str, str]:
@@ -125,8 +125,8 @@ def clean_environment(original: dict[str, str]) -> dict[str, str]:
 
 Caller-provided Docker endpoints, builder settings, proxies and credentials
 must not silently change which daemon or registry a command reaches."""
-    names = ("PATH", "HOME", "XDG_RUNTIME_DIR", "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR")
-    return {name: original[name] for name in names if name in original}
+    allowed_host_variables = ("PATH", "HOME", "XDG_RUNTIME_DIR", "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR")
+    return {variable_name: original[variable_name] for variable_name in allowed_host_variables if variable_name in original}
 
 
 def required_context(environ: dict[str, str]) -> str:
@@ -134,13 +134,13 @@ def required_context(environ: dict[str, str]) -> str:
     
     Do not fall back to the process's ambient DOCKER_CONTEXT or Docker's
     default context."""
-    selected = environ.get("HELLO_WORLD_DOCKER_CONTEXT")
-    if selected is None or not CONTEXT_NAME.fullmatch(selected):
+    selected_context = environ.get("HELLO_WORLD_DOCKER_CONTEXT")
+    if selected_context is None or not CONTEXT_NAME.fullmatch(selected_context):
         raise OperationError(
             "Specify DOCKER_CONTEXT=<local rootless context> on the make command line. "
             "An empty or malformed context is not accepted."
         )
-    return selected
+    return selected_context
 
 
 def checked_result(result: Result, purpose: str) -> str:
@@ -149,8 +149,8 @@ def checked_result(result: Result, purpose: str) -> str:
     A nonzero exit retains the recent output as context. A truncated successful
     response is rejected because its complete value cannot be trusted."""
     if result.status != 0:
-        detail = result.output.strip()[-1200:]
-        raise OperationError(f"{purpose} failed (exit {result.status}): {detail}")
+        failure_output = result.output.strip()[-1200:]
+        raise OperationError(f"{purpose} failed (exit {result.status}): {failure_output}")
     if result.truncated:
         raise OperationError(f"{purpose} emitted more than {MAX_OUTPUT} bytes")
     return result.output.strip()
@@ -163,10 +163,10 @@ def socket_path(endpoint: str) -> Path:
     actual filesystem object."""
     if not endpoint.startswith("unix://") or re.search(r"[\x00-\x1f\x7f]", endpoint):
         raise OperationError("Selected Docker context must use a local Unix socket")
-    raw = endpoint[len("unix://"):]
-    if not raw.startswith("/") or "?" in raw or "#" in raw:
+    socket_address = endpoint[len("unix://"):]
+    if not socket_address.startswith("/") or "?" in socket_address or "#" in socket_address:
         raise OperationError("Selected Docker endpoint must be an absolute local socket path")
-    return Path(raw)
+    return Path(socket_address)
 
 
 def verify_socket(endpoint: str) -> None:
@@ -174,12 +174,12 @@ def verify_socket(endpoint: str) -> None:
     
     Inspect without following a symlink. A context name alone is not
     evidence that it selects the intended local engine."""
-    path = socket_path(endpoint)
+    selected_socket_path = socket_path(endpoint)
     try:
-        entry = path.lstat()
+        socket_metadata = selected_socket_path.lstat()
     except OSError as error:
-        raise OperationError(f"Cannot inspect selected Docker socket {path}: {error}") from error
-    if not stat.S_ISSOCK(entry.st_mode) or entry.st_uid != os.geteuid():
+        raise OperationError(f"Cannot inspect selected Docker socket {selected_socket_path}: {error}") from error
+    if not stat.S_ISSOCK(socket_metadata.st_mode) or socket_metadata.st_uid != os.geteuid():
         raise OperationError("Selected Docker socket must be user-owned and a Unix socket")
 
 
@@ -199,17 +199,17 @@ class DockerClient:
         
         This reads the caller's context definitions but rejects nonlocal or
         non-user-owned sockets rather than silently choosing another engine."""
-        output = checked_result(
+        context_endpoint = checked_result(
             self.executor.run(
                 ["docker", "context", "inspect", "--format", "{{.Endpoints.docker.Host}}", name],
                 self.environment, CLIENT_TIMEOUT,
             ),
             "Docker context inspection",
         )
-        socket_path(output)
-        verify_socket(output)
-        self.endpoint = output
-        return output
+        socket_path(context_endpoint)
+        verify_socket(context_endpoint)
+        self.endpoint = context_endpoint
+        return context_endpoint
 
     def call(self, *args: str, timeout: int = CLIENT_TIMEOUT) -> Result:
         """Run an operation on the already selected engine.
@@ -227,39 +227,39 @@ class DockerClient:
         
         Require systemd with cgroup v2 for resource limits and return the daemon's
         reported ID. This does not inspect individual container restrictions."""
-        info = checked_result(self.call("info", "--format", "{{json .}}"), "Docker engine inspection")
+        engine_info_json = checked_result(self.call("engine_info_json", "--format", "{{json .}}"), "Docker engine inspection")
         try:
-            description = json.loads(info)
+            engine_info = json.loads(engine_info_json)
         except (TypeError, ValueError) as error:
             raise OperationError("Docker engine returned malformed information") from error
-        if not isinstance(description, dict):
-            raise OperationError("Docker engine returned a non-object description")
-        security = description.get("SecurityOptions")
-        if not isinstance(security, list) or "name=rootless" not in security:
+        if not isinstance(engine_info, dict):
+            raise OperationError("Docker engine returned a non-object engine_info")
+        engine_security_options = engine_info.get("SecurityOptions")
+        if not isinstance(engine_security_options, list) or "name=rootless" not in engine_security_options:
             raise OperationError("Confined operations require a rootless Docker engine")
-        if description.get("CgroupDriver") != "systemd" or description.get("CgroupVersion") != "2":
+        if engine_info.get("CgroupDriver") != "systemd" or engine_info.get("CgroupVersion") != "2":
             raise OperationError("Rootless engine must enforce resource limits through systemd cgroup v2")
-        if description.get("OSType") != "linux":
+        if engine_info.get("OSType") != "linux":
             raise OperationError("Confined operations require a Linux Docker engine")
-        if description.get("Architecture") not in ("x86_64", "amd64"):
+        if engine_info.get("Architecture") not in ("x86_64", "amd64"):
             raise OperationError("Pinned runtime requires a linux/amd64 Docker engine")
-        identity = description.get("ID")
-        if not isinstance(identity, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9:._-]{0,127}", identity):
+        engine_identity = engine_info.get("ID")
+        if not isinstance(engine_identity, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9:._-]{0,127}", engine_identity):
             raise OperationError("Docker daemon ID is missing or invalid")
-        return identity
+        return engine_identity
 
     def image(self, reference: str, expected_id: str, acquire_hint: str) -> str:
         """Check that the pinned image exists locally with the expected config ID.
         
         No download is attempted. Missing or mismatched images stop execution;
         a missing image includes the caller's explicit acquisition command."""
-        result = self.call("image", "inspect", "--format", "{{.Id}}", reference)
-        if result.status != 0:
+        image_inspection_result = self.call("image", "inspect", "--format", "{{.Id}}", reference)
+        if image_inspection_result.status != 0:
             raise OperationError(f"Pinned image is missing on the selected engine. {acquire_hint}")
-        identity = checked_result(result, "Pinned image inspection")
-        if identity != expected_id:
-            raise OperationError(f"Pinned image configuration differs: {identity!r}")
-        return identity
+        actual_image_id = checked_result(image_inspection_result, "Pinned image inspection")
+        if actual_image_id != expected_id:
+            raise OperationError(f"Pinned image configuration differs: {actual_image_id!r}")
+        return actual_image_id
 
     def acquire(self, reference: str, expected_id: str) -> str:
         """Pull the specified linux/amd64 image and verify its local config ID.
@@ -281,12 +281,12 @@ Refuse root callers, create a private client configuration, and remove it
 when the context exits. This does not own or retire Docker containers."""
     if os.geteuid() == 0 or os.getegid() == 0:
         raise OperationError("Confined operations must be invoked by a non-root user")
-    context_name = required_context(environ)
-    docker = DockerClient(executor or NativeExecutor(), environ)
-    docker.context(context_name)
-    with tempfile.TemporaryDirectory(prefix="hello-world-docker-client-") as directory:
-        docker.config = Path(directory)
-        (docker.config / "config.json").write_text("{}\n", encoding="utf-8")
-        docker.engine()
-        yield docker
+    selected_context_name = required_context(environ)
+    selected_docker_client = DockerClient(executor or NativeExecutor(), environ)
+    selected_docker_client.context(selected_context_name)
+    with tempfile.TemporaryDirectory(prefix="hello-world-selected_docker_client-client-") as client_config_directory:
+        selected_docker_client.config = Path(client_config_directory)
+        (selected_docker_client.config / "config.json").write_text("{}\n", encoding="utf-8")
+        selected_docker_client.engine()
+        yield selected_docker_client
 

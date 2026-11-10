@@ -20,38 +20,38 @@ class DiscoveryContracts(unittest.TestCase):
 
     def test_discovery_covers_test_directories(self):
         """Compare all immediate test directories with modules loaded by the actual discovery settings."""
-        options = dict(zip(
+        discovery_options = dict(zip(
             repository.UNITTEST_DISCOVERY_ARGS[::2],
             repository.UNITTEST_DISCOVERY_ARGS[1::2],
             strict=True,
         ))
-        tests_root = ROOT / options["-s"]
-        loader = unittest.TestLoader()
-        suite = loader.discover(
-            start_dir=str(tests_root),
-            top_level_dir=str(ROOT / options["-t"]),
-            pattern=options["-p"],
+        test_root = ROOT / discovery_options["-s"]
+        test_loader = unittest.TestLoader()
+        discovered_suite = test_loader.discover(
+            start_dir=str(test_root),
+            top_level_dir=str(ROOT / discovery_options["-t"]),
+            pattern=discovery_options["-p"],
         )
 
-        def cases(suite):
-            """Walk unittest's nested suites to collect the discovered test cases."""
+        def discovered_cases(suite):
+            """Walk unittest's nested suites to collect the discovered_directories test cases."""
             for candidate in suite:
                 if isinstance(candidate, unittest.TestSuite):
-                    yield from cases(candidate)
+                    yield from discovered_cases(candidate)
                 else:
                     yield candidate
 
-        # Every immediate directory under tests/ is expected to be discovered.
+        # Every immediate directory under tests/ is expected_directories to be discovered_directories.
         # A missing package marker must fail this check, not hide the directory.
-        expected = {
+        expected_directories = {
             directory.name
-            for directory in tests_root.iterdir()
+            for directory in test_root.iterdir()
             if directory.is_dir()
         }
-        discovered = {case.id().split(".")[1] for case in cases(suite)}
+        discovered_directories = {case.id().split(".")[1] for case in discovered_cases(discovered_suite)}
 
-        self.assertFalse(loader.errors)
-        self.assertEqual(discovered, expected)
+        self.assertFalse(test_loader.errors)
+        self.assertEqual(discovered_directories, expected_directories)
 
 
 if __name__ == "__main__":

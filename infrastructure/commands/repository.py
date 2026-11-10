@@ -38,40 +38,40 @@ UNITTEST_COMMAND = finite_job.Command(
 def public_mounts(root: Path) -> tuple[finite_job.ReadOnlyMount, ...]:
     """Select the checkout entries that tests may read inside Docker.
 
-Require the core source roots and reject unknown top-level entries, links
-and files unreadable by the container user. Private roots such as .git and
+Require the core source roots and reject unclassified_roots top-level entries, links
+and filenames unreadable by the container user. Private roots such as .git and
 secrets are never mounted."""
     if any(ch in str(root) for ch in (",", "\n", "\r", "\x00")):
-        raise docker_client.OperationError("Repository path cannot be represented safely in Docker mounts")
-    discovered = {entry.name: entry for entry in root.iterdir()}
-    unknown = sorted(discovered.keys() - PUBLIC_ROOTS - PRIVATE_ROOTS)
-    if unknown:
-        raise docker_client.OperationError(f"Unclassified repository roots: {', '.join(unknown)}")
-    for required in ("Makefile", "infrastructure", "tests"):
-        if required not in discovered:
-            raise docker_client.OperationError(f"Required repository input missing: {required}")
+        raise docker_client.OperationError("Repository path cannot be represented safely in Docker read_only_mounts")
+    root_entries = {source_entry.root_name: source_entry for source_entry in root.iterdir()}
+    unclassified_roots = sorted(root_entries.keys() - PUBLIC_ROOTS - PRIVATE_ROOTS)
+    if unclassified_roots:
+        raise docker_client.OperationError(f"Unclassified {unclassified_roots = }")
+    for required_root in ("Makefile", "infrastructure", "tests"):
+        if required_root not in root_entries:
+            raise docker_client.OperationError(f"Missing {required_root = }")
 
-    mounts = []
-    for name in sorted(PUBLIC_ROOTS & discovered.keys()):
-        entry = discovered[name]
-        for directory, directories, files in os.walk(entry, followlinks=False):
-            for child in [Path(directory), *(Path(directory) / part for part in directories + files)]:
-                mode = child.lstat().st_mode
-                if not (stat.S_ISREG(mode) or stat.S_ISDIR(mode)):
-                    raise docker_client.OperationError(f"Refusing link or non-file source: {child}")
-                if (stat.S_ISDIR(mode) and mode & 0o005 != 0o005) or (
-                    stat.S_ISREG(mode) and mode & 0o004 != 0o004
+    read_only_mounts = []
+    for root_name in sorted(PUBLIC_ROOTS & root_entries.keys()):
+        source_entry = root_entries[root_name]
+        for walk_directory, subdirectories, filenames in os.walk(source_entry, followlinks=False):
+            for source_child in [Path(walk_directory), *(Path(walk_directory) / part for part in subdirectories + filenames)]:
+                source_mode = source_child.lstat().st_mode
+                if not (stat.S_ISREG(source_mode) or stat.S_ISDIR(source_mode)):
+                    raise docker_client.OperationError(f"Refusing link or non-file {source_child = }")
+                if (stat.S_ISDIR(source_mode) and source_mode & 0o005 != 0o005) or (
+                    stat.S_ISREG(source_mode) and source_mode & 0o004 != 0o004
                 ):
-                    raise docker_client.OperationError(f"Checker cannot read non-public source: {child}")
-        mode = entry.lstat().st_mode
-        if not (stat.S_ISREG(mode) or stat.S_ISDIR(mode)):
-            raise docker_client.OperationError(f"Refusing link or non-file source: {entry}")
-        if (stat.S_ISDIR(mode) and mode & 0o005 != 0o005) or (
-            stat.S_ISREG(mode) and mode & 0o004 != 0o004
+                    raise docker_client.OperationError(f"Checker cannot read non-public {source_child = }")
+        source_mode = source_entry.lstat().st_mode
+        if not (stat.S_ISREG(source_mode) or stat.S_ISDIR(source_mode)):
+            raise docker_client.OperationError(f"Refusing link or non-file {source_entry = }")
+        if (stat.S_ISDIR(source_mode) and source_mode & 0o005 != 0o005) or (
+            stat.S_ISREG(source_mode) and source_mode & 0o004 != 0o004
         ):
-            raise docker_client.OperationError(f"Checker cannot read non-public source: {entry}")
-        mounts.append(finite_job.ReadOnlyMount(entry, f"/workspace/{name}"))
-    return tuple(mounts)
+            raise docker_client.OperationError(f"Checker cannot read non-public {source_entry = }")
+        read_only_mounts.append(finite_job.ReadOnlyMount(source_entry, f"/workspace/{root_name}"))
+    return tuple(read_only_mounts)
 
 
 def repository_test_job(root: Path, image_id: str, command: finite_job.Command = UNITTEST_COMMAND) -> finite_job.Job:
@@ -100,29 +100,29 @@ def run_repository_command(
     separately. No host-side test fallback is permitted."""
     if action not in {"check", "acquire"}:
         raise docker_client.OperationError(f"Unknown repository operation: {action}")
-    context_name = docker_client.required_context(environ)
-    with docker_client.docker_client(environ, executor) as docker:
+    selected_context_name = docker_client.required_context(environ)
+    with docker_client.docker_client(environ, executor) as selected_engine_client:
         if action == "acquire":
-            docker.acquire(CHECKER_IMAGE_REFERENCE, CHECKER_IMAGE_ID)
-            print(f"Acquired checker image {CHECKER_IMAGE_ID} on Docker context {context_name}.")
+            selected_engine_client.acquire(CHECKER_IMAGE_REFERENCE, CHECKER_IMAGE_ID)
+            print(f"Acquired checker image {CHECKER_IMAGE_ID} on Docker context {selected_context_name}.")
             return 0
-        image_id = docker.image(
+        verified_image_id = selected_engine_client.image(
             reference=CHECKER_IMAGE_REFERENCE,
             expected_id=CHECKER_IMAGE_ID,
             acquire_hint="Run: make repository/image/acquire DOCKER_CONTEXT=<context>",
         )
-        outcome = finite_job.run_container(docker, context_name, repository_test_job(root, image_id))
+        job_outcome = finite_job.run_container(selected_engine_client, selected_context_name, repository_test_job(root, verified_image_id))
 
-    if outcome.output:
-        print(outcome.output, end="" if outcome.output.endswith("\n") else "\n")
-    if outcome.failure:
-        failure = outcome.failure
-        if failure.startswith("Container exited with status "):
-            failure = f"Repository checks failed (container exit {failure.rsplit(' ', 1)[-1]})"
-        print(f"REPOSITORY CHECK FAILURE: {failure}", file=sys.stderr)
-    for diagnostic in outcome.diagnostics:
-        print(diagnostic, file=sys.stderr)
-    return outcome.status
+    if job_outcome.output:
+        print(job_outcome.output, end="" if job_outcome.output.endswith("\n") else "\n")
+    if job_outcome.job_failure:
+        job_failure = job_outcome.job_failure
+        if job_failure.startswith("Container exited with status "):
+            job_failure = f"Repository checks failed (container exit {job_failure.rsplit(' ', 1)[-1]})"
+        print(f"REPOSITORY CHECK FAILURE: {job_failure}", file=sys.stderr)
+    for operation_diagnostic in job_outcome.diagnostics:
+        print(operation_diagnostic, file=sys.stderr)
+    return job_outcome.status
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -130,25 +130,25 @@ def main(argv: list[str] | None = None) -> int:
     
     Signal handlers translate interruption into the same cleanup path used
     for other failed jobs, and are restored before returning."""
-    actions = sys.argv[1:] if argv is None else argv
-    if len(actions) != 1:
+    selected_actions = sys.argv[1:] if argv is None else argv
+    if len(selected_actions) != 1:
         print("Usage: python3 -m infrastructure.commands.repository check|acquire", file=sys.stderr)
         return 2
 
-    def cancel(signum: int, _frame: object) -> None:
+    def cancel(signal_number: int, _frame: object) -> None:
         """Raise cancellation so an in-flight job can enter its cleanup path."""
-        raise docker_client.Cancelled(f"Caller requested cancellation ({signal.Signals(signum).name})")
+        raise docker_client.Cancelled(f"Caller requested cancellation ({signal.Signals(signal_number).name})")
 
-    signals = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
-    previous = {number: signal.signal(number, cancel) for number in signals}
+    terminal_signals = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
+    previous_handlers = {number: signal.signal(number, cancel) for number in terminal_signals}
     try:
-        return run_repository_command(actions[0], dict(os.environ))
+        return run_repository_command(selected_actions[0], dict(os.environ))
     except (docker_client.OperationError, OSError, TimeoutError, KeyboardInterrupt) as error:
         print(f"REPOSITORY OPERATION FAILURE: {error}", file=sys.stderr)
         return 2
     finally:
-        for number, handler in previous.items():
-            signal.signal(number, handler)
+        for number, previous_handler in previous_handlers.items():
+            signal.signal(number, previous_handler)
 
 
 if __name__ == "__main__":

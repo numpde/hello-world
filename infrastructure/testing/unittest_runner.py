@@ -13,7 +13,7 @@ import unittest
 
 
 def run(suite: unittest.TestSuite) -> int:
-    """Execute one suite and report the result without custom unittest classes.
+    """Execute one suite and report the test_result without custom unittest classes.
     
     Collect failures, errors and unexpected successes, print totals first,
     then print complete tracebacks. Skips and expected failures are not failures.
@@ -22,36 +22,36 @@ def run(suite: unittest.TestSuite) -> int:
         print("NO TESTS RAN: unittest discovery was empty", file=sys.stderr)
         return 1
 
-    result = unittest.TestResult()
-    started = time.monotonic()
-    result.startTestRun()
+    test_result = unittest.TestResult()
+    test_start_time = time.monotonic()
+    test_result.startTestRun()
     try:
-        suite.run(result)
+        suite.run(test_result)
     finally:
-        result.stopTestRun()
+        test_result.stopTestRun()
 
-    print(f"Ran {result.testsRun} test{'s' if result.testsRun != 1 else ''} "
-          f"in {time.monotonic() - started:.3f}s\n")
-    if result.wasSuccessful():
+    print(f"Ran {test_result.testsRun} test{'s' if test_result.testsRun != 1 else ''} "
+          f"in {time.monotonic() - test_start_time:.3f}s\n")
+    if test_result.wasSuccessful():
         print("OK")
         return 0
 
-    failures = len(result.failures)
-    errors = len(result.errors)
-    unexpected = len(result.unexpectedSuccesses)
+    failures = len(test_result.failures)
+    errors = len(test_result.errors)
+    unexpected = len(test_result.unexpectedSuccesses)
     print(f"FAILED (failures={failures}, errors={errors}, unexpected successes={unexpected})")
     print("\nFailure details (end of unittest run):")
-    for kind, outcomes in (("FAIL", result.failures), ("ERROR", result.errors)):
-        for test, traceback in outcomes:
-            print(f"\n{kind}: {test.id()}\n{traceback.rstrip()}")
-    for test in result.unexpectedSuccesses:
-        print(f"\nUNEXPECTED SUCCESS: {test.id()}")
+    for outcome_kind, outcome_records in (("FAIL", test_result.failures), ("ERROR", test_result.errors)):
+        for test_case, failure_traceback in outcome_records:
+            print(f"\n{outcome_kind}: {test_case.id()}\n{failure_traceback.rstrip()}")
+    for test_case in test_result.unexpectedSuccesses:
+        print(f"\nUNEXPECTED SUCCESS: {test_case.id()}")
     print(f"End of failures: failures={failures}, errors={errors}, unexpected_successes={unexpected}")
     return 1
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Parse standard unittest discovery flags and run the selected suite.
+    """Parse standard unittest discovery flags and run the selected discovered_suite.
     
     The caller supplies the start directory, top-level directory and filename
     pattern. Refuse root execution; container admission is checked elsewhere."""
@@ -59,17 +59,17 @@ def main(argv: list[str] | None = None) -> int:
         print("Unittest runner must not run as root", file=sys.stderr)
         return 2
 
-    parser = argparse.ArgumentParser(description="Run repository tests and report failures last")
-    parser.add_argument("-s", "--start-directory", required=True)
-    parser.add_argument("-t", "--top-level-directory", required=True)
-    parser.add_argument("-p", "--pattern", required=True)
-    args = parser.parse_args(argv)
-    suite = unittest.defaultTestLoader.discover(
-        start_dir=args.start_directory,
-        top_level_dir=args.top_level_directory,
-        pattern=args.pattern,
+    discovery_parser = argparse.ArgumentParser(description="Run repository tests and report failures last")
+    discovery_parser.add_argument("-s", "--start-directory", required=True)
+    discovery_parser.add_argument("-t", "--top-level-directory", required=True)
+    discovery_parser.add_argument("-p", "--pattern", required=True)
+    discovery_args = discovery_parser.parse_args(argv)
+    discovered_suite = unittest.defaultTestLoader.discover(
+        start_dir=discovery_args.start_directory,
+        top_level_dir=discovery_args.top_level_directory,
+        pattern=discovery_args.pattern,
     )
-    return run(suite)
+    return run(discovered_suite)
 
 
 if __name__ == "__main__":
