@@ -371,6 +371,8 @@ def cleanup(docker: DockerClient, token: str, owner: str, image_id: str) -> None
 
     remaining_container_ids = owned_containers(docker, token, owner, image_id, timeout=remaining_cleanup_timeout)
 
+    # Failed rm --volumes may leave anonymous volumes even if the container
+    # disappears. An empty container listing alone cannot confirm retirement.
     if remaining_container_ids or removal_failures:
         raise OperationError(
             f"Container cleanup unconfirmed: {remaining_container_ids = }, {removal_failures = }"
