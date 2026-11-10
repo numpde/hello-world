@@ -1,1 +1,1 @@
-"""Docker engine access and confined workloads."""
+"""Docker engine access and finite jobs, independent of commands and test frameworks."""

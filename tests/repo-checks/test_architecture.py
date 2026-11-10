@@ -1,7 +1,8 @@
-"""Verify the deliberately one-way infrastructure dependency graph.
+"""Check import directions and whether every test directory is discovered.
 
-Source ownership follows notes/001 and 003. These restrictions protect
-interfaces between separate responsibilities, not arbitrary coding style.
+Docker code must not import Make commands or tests. The discovery check uses
+the maintained unittest arguments and every immediate directory under tests/,
+so a missing package marker cannot silently hide tests.
 """
 
 from __future__ import annotations
@@ -24,6 +25,10 @@ RESTRICTIONS = {
 
 
 def imports(source: Path):
+    """Yield imports declared in Python syntax, resolving relative module names.
+    
+    This is a static dependency check; it does not attempt to identify imports
+    constructed dynamically at runtime."""
     package = ".".join(source.parent.relative_to(ROOT).parts)
     for node in ast.walk(ast.parse(source.read_text(encoding="utf-8"), filename=str(source))):
         if isinstance(node, ast.Import):
@@ -37,7 +42,9 @@ def imports(source: Path):
 
 
 class ArchitectureContracts(unittest.TestCase):
+    """Check module ownership and discoverability of the repository's test suites."""
     def test_implementation_boundaries(self):
+        """Keep Docker and framework code independent of higher-level command modules."""
         for relative_path, forbidden in RESTRICTIONS.items():
             source = ROOT / relative_path
             with self.subTest(source=relative_path):
@@ -50,6 +57,7 @@ class ArchitectureContracts(unittest.TestCase):
                         )
 
     def test_discovery_covers_test_directories(self):
+        """Compare all immediate test directories with modules loaded by the actual discovery settings."""
         options = dict(zip(
             repository.UNITTEST_DISCOVERY_ARGS[::2],
             repository.UNITTEST_DISCOVERY_ARGS[1::2],
@@ -64,6 +72,7 @@ class ArchitectureContracts(unittest.TestCase):
         )
 
         def cases(suite):
+            """Walk unittest's nested suites to collect the discovered test cases."""
             for candidate in suite:
                 if isinstance(candidate, unittest.TestSuite):
                     yield from cases(candidate)

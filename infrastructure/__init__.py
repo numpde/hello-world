@@ -1,1 +1,1 @@
-"""Shared execution and workflow capabilities."""
+"""Tools shared by all example projects; application code does not live here."""

@@ -1,7 +1,10 @@
-"""Confine, execute and retire one finite Docker job with recovery evidence.
+"""Execute one finite command in a confined Docker container.
 
-The caller selects the immutable image, command and read-only inputs. This
-module owns job isolation, lifecycle and cleanup; it selects no test runner.
+The caller supplies an immutable image ID, the executable and literal
+arguments, and read-only inputs. This module fixes the security options,
+checks the created container before starting it, and removes only resources
+whose ownership it can verify. An uncertain create or cleanup leaves a
+private recovery receipt. This is not a service or image-building runner.
 """
 
 from __future__ import annotations
@@ -36,18 +39,29 @@ CONTAINER_ID = re.compile(r"[0-9a-f]{64}\Z")
 
 @dataclass(frozen=True)
 class ReadOnlyMount:
+    """A host source made available inside a job without write permission.
+    
+    This finite-job policy does not admit writable host mounts."""
     source: Path
     target: str
 
 
 @dataclass(frozen=True)
 class Command:
+    """The entry point and literal arguments run inside the selected image.
+    
+    The job lifecycle is independent of whether this invokes unittest,
+    unittest-parallel, a compiler, or another finite command."""
     executable: str
     arguments: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
 class Job:
+    """Inputs for one bounded container run.
+    
+    Callers select the image, command, read-only mounts and ordinary environment.
+    They cannot add Docker flags that weaken the runner's confinement policy."""
     image_id: str
     command: Command
     mounts: tuple[ReadOnlyMount, ...]
@@ -57,6 +71,10 @@ class Job:
 
 @dataclass(frozen=True)
 class Outcome:
+    """Execution evidence and cleanup evidence for a finished attempt.
+    
+    status is nonzero for a failed command or unconfirmed cleanup. The recovery
+    path remains when ownership or retirement cannot safely be established."""
     status: int
     output: str
     failure: str | None
@@ -64,7 +82,11 @@ class Outcome:
     recovery: Path | None
 
 def container_arguments(job: Job, token: str, owner: str) -> list[str]:
-    """Construct a confined container without accepting arbitrary Docker options."""
+    """Build the create command from admitted job inputs.
+
+Reject ambiguous mount destinations and malformed arguments before touching
+Docker. Network, privileges, resources and writable storage are fixed here,
+not selectable through an arbitrary list of Docker flags."""
     if not re.fullmatch(r"sha256:[0-9a-f]{64}", job.image_id):
         raise OperationError("A verified immutable image ID is required")
     executable = job.command.executable
@@ -105,7 +127,11 @@ def container_arguments(job: Job, token: str, owner: str) -> list[str]:
 
 
 def verify_container_posture(docker: DockerClient, identifier: str, job: Job) -> None:
-    """Reject created containers whose effective grants differ from policy."""
+    """Inspect the engine's container settings before starting the workload.
+
+Check network, root filesystem, privileges, resource limits, temporary
+storage and every source mount. A requested flag alone is not proof that
+the engine applied the restriction."""
     raw = checked_result(
         docker.call("container", "inspect", "--format", "{{json .}}", identifier),
         "Checker confinement inspection",
@@ -158,6 +184,10 @@ def verify_container_posture(docker: DockerClient, identifier: str, job: Job) ->
 
 
 def container_ids(raw: str) -> list[str]:
+    """Parse the full, unique IDs returned by Docker container listing.
+    
+    Reject truncated or duplicate identities rather than risk acting on an
+    ambiguous container during cleanup."""
     identities = [value for value in raw.splitlines() if value]
     if len(identities) != len(set(identities)) or any(not CONTAINER_ID.fullmatch(value) for value in identities):
         raise OperationError("Docker reported malformed or duplicate container identities")
@@ -168,6 +198,10 @@ def owned_containers(
     docker: DockerClient, token: str, owner: str, image_id: str,
     timeout: Callable[[], int] = lambda: CLIENT_TIMEOUT,
 ) -> list[str]:
+    """Discover containers with this run's label and verify each candidate.
+    
+    A matching search label does not grant deletion authority: the full ID,
+    image ID and both ownership labels must also agree."""
     found = checked_result(
         docker.call("ps", "--all", "--quiet", "--no-trunc", "--filter", f"label={OPERATION_LABEL}={token}", timeout=timeout()),
         "Owned container discovery",
@@ -195,9 +229,14 @@ def owned_containers(
 
 
 def cleanup(docker: DockerClient, token: str, owner: str, image_id: str) -> None:
+    """Retire verified containers within a separate cleanup deadline.
+    
+    Attempt removal, then list them again to prove they are gone. Preserve
+    failures and raise if removal or the final inspection is inconclusive."""
     deadline = time.monotonic() + CLEANUP_TIMEOUT
 
     def remaining() -> int:
+        """Bound each cleanup request by the time left for the whole cleanup."""
         seconds = deadline - time.monotonic()
         if seconds <= 0:
             raise TimeoutError("Docker cleanup budget exhausted")
@@ -217,6 +256,10 @@ def cleanup(docker: DockerClient, token: str, owner: str, image_id: str) -> None
 
 
 def write_receipt(directory: Path, context: str, endpoint: str, token: str, owner: str) -> None:
+    """Save the selected engine and ownership labels before Docker create.
+    
+    If a client times out after sending a request, operators can identify
+    possible daemon-side resources without guessing or globally pruning."""
     receipt = directory / "recovery.txt"
     receipt.write_text(
         f"Context: {context}\nEndpoint: {endpoint}\nOperation label: {OPERATION_LABEL}={token}\n"
@@ -230,7 +273,10 @@ def write_receipt(directory: Path, context: str, endpoint: str, token: str, owne
 
 @contextmanager
 def protected_cleanup():
-    """Prevent repeated terminal signals from interrupting resource retirement."""
+    """Temporarily ignore terminal signals while retiring owned resources.
+
+The caller records the primary interruption; this guard prevents another
+signal from skipping cleanup and restores the previous handlers afterward."""
     signals = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
     previous = {number: signal.signal(number, signal.SIG_IGN) for number in signals}
     try:
@@ -241,7 +287,12 @@ def protected_cleanup():
 
 
 def run_container(docker: DockerClient, context: str, job: Job) -> Outcome:
-    """Create, admit, execute, and retire one container owned by this operation."""
+    """Run a job and report both its work outcome and cleanup outcome.
+
+Record ownership before create, require a matching container-ID receipt,
+verify confinement, then start and inspect the final exit state. Always
+attempt retirement. Keep the receipt when create or cleanup is uncertain;
+never report a clean success merely because the Docker client exited."""
     token = secrets.token_hex(16)
     owner = secrets.token_hex(16)
     arguments = container_arguments(job, token, owner)

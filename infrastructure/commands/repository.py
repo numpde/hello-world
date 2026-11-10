@@ -1,4 +1,9 @@
-"""Implement Make repository/* commands using shared Docker and test infrastructure."""
+"""Implement Make's repository/check and repository/image/acquire commands.
+
+This module selects the checker image, unittest command and public source
+mounts. Docker client admission, confinement and resource retirement are
+handled by the shared Docker modules. Repository tests never run on the host.
+"""
 
 from __future__ import annotations
 
@@ -31,7 +36,11 @@ UNITTEST_COMMAND = finite_job.Command(
 
 
 def public_mounts(root: Path) -> tuple[finite_job.ReadOnlyMount, ...]:
-    """Grant only classified public project inputs to repository tests."""
+    """Select the checkout entries that tests may read inside Docker.
+
+Require the core source roots and reject unknown top-level entries, links
+and files unreadable by the container user. Private roots such as .git and
+secrets are never mounted."""
     if any(ch in str(root) for ch in (",", "\n", "\r", "\x00")):
         raise docker_client.OperationError("Repository path cannot be represented safely in Docker mounts")
     discovered = {entry.name: entry for entry in root.iterdir()}
@@ -66,6 +75,10 @@ def public_mounts(root: Path) -> tuple[finite_job.ReadOnlyMount, ...]:
 
 
 def repository_test_job(root: Path, image_id: str, command: finite_job.Command = UNITTEST_COMMAND) -> finite_job.Job:
+    """Describe the repository test workload without running it.
+    
+    The command can be replaced by unittest-parallel when its pinned checker
+    image is available; source grants and Docker policy stay unchanged."""
     return finite_job.Job(
         image_id=image_id,
         command=command,
@@ -80,6 +93,11 @@ def run_repository_command(
     executor: docker_client.Executor | None = None,
     root: Path = REPOSITORY_ROOT,
 ) -> int:
+    """Run the selected Make action against one explicit Docker context.
+    
+    Acquisition may download the pinned image. Checking uses the local image,
+    runs tests in a confined job, and reports execution and cleanup failures
+    separately. No host-side test fallback is permitted."""
     if action not in {"check", "acquire"}:
         raise docker_client.OperationError(f"Unknown repository operation: {action}")
     context_name = docker_client.required_context(environ)
@@ -108,12 +126,17 @@ def run_repository_command(
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Parse the Make-facing action and turn operator failures into an exit code.
+    
+    Signal handlers translate interruption into the same cleanup path used
+    for other failed jobs, and are restored before returning."""
     actions = sys.argv[1:] if argv is None else argv
     if len(actions) != 1:
         print("Usage: python3 -m infrastructure.commands.repository check|acquire", file=sys.stderr)
         return 2
 
     def cancel(signum: int, _frame: object) -> None:
+        """Raise cancellation so an in-flight job can enter its cleanup path."""
         raise docker_client.Cancelled(f"Caller requested cancellation ({signal.Signals(signum).name})")
 
     signals = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)

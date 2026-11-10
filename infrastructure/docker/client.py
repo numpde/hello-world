@@ -1,7 +1,9 @@
-"""Select one local rootless Docker engine and run sanitized, bounded client calls.
+"""Use one explicitly selected local Docker engine for an operation.
 
-No repository-specific facts, test choices or container-job lifecycle belong
-here. Acquisition is explicit and separated from offline execution.
+The caller names a Docker context. This module checks the context's Unix
+socket and the rootless daemon, then sends every command to that endpoint
+with a fresh, empty Docker client configuration. It discards inherited
+Docker and proxy settings. Container ownership and cleanup belong elsewhere.
 """
 
 from __future__ import annotations
@@ -27,27 +29,43 @@ CONTEXT_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
 
 
 class OperationError(RuntimeError):
-    """A selected operation could not be completed and verified."""
+    """The Docker operation failed, or its outcome could not be established."""
 
 
 class Cancelled(OperationError):
-    """The caller requested cancellation; cleanup still needs to run."""
+    """The caller interrupted an operation; owned resources still need cleanup."""
 
 
 @dataclass(frozen=True)
 class Result:
+    """The exit status and captured output of one client process.
+    
+    When truncated is true, output holds the most recent bytes, not the
+    beginning of the process's output."""
     status: int
     output: str
     truncated: bool = False
 
 class Executor(Protocol):
+    """Replaceable boundary for invoking a Docker client.
+    
+    A timeout bounds the local process. It does not establish whether a
+    request already reached the daemon or changed its state."""
     def run(self, argv: list[str], env: dict[str, str], timeout: int) -> Result: ...
 
 
 class NativeExecutor:
-    """Run a Docker client with a bounded lifetime and bounded captured output."""
+    """Run a client without blocking on its output or leaving it running.
+
+The output buffer holds at most the last MAX_OUTPUT bytes. If the process
+outlives its deadline, terminate its process group; callers must separately
+check any daemon-side effects."""
 
     def run(self, argv: list[str], env: dict[str, str], timeout: int) -> Result:
+        """Use the supplied environment and deadline for one subprocess.
+        
+        Standard output and error share a bounded buffer. Timeout raises after
+        attempting to stop the local process; it is not a Docker cleanup result."""
         import selectors
 
         process = subprocess.Popen(
@@ -103,12 +121,19 @@ class NativeExecutor:
 
 
 def clean_environment(original: dict[str, str]) -> dict[str, str]:
-    """Keep only the host facts necessary to run a local Docker client."""
+    """Keep the minimum host environment needed to find and run Docker.
+
+Caller-provided Docker endpoints, builder settings, proxies and credentials
+must not silently change which daemon or registry a command reaches."""
     names = ("PATH", "HOME", "XDG_RUNTIME_DIR", "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR")
     return {name: original[name] for name in names if name in original}
 
 
 def required_context(environ: dict[str, str]) -> str:
+    """Require the context explicitly forwarded by Make.
+    
+    Do not fall back to the process's ambient DOCKER_CONTEXT or Docker's
+    default context."""
     selected = environ.get("HELLO_WORLD_DOCKER_CONTEXT")
     if selected is None or not CONTEXT_NAME.fullmatch(selected):
         raise OperationError(
@@ -119,6 +144,10 @@ def required_context(environ: dict[str, str]) -> str:
 
 
 def checked_result(result: Result, purpose: str) -> str:
+    """Return a successful client's text, or report its original failure.
+    
+    A nonzero exit retains the recent output as context. A truncated successful
+    response is rejected because its complete value cannot be trusted."""
     if result.status != 0:
         detail = result.output.strip()[-1200:]
         raise OperationError(f"{purpose} failed (exit {result.status}): {detail}")
@@ -128,6 +157,10 @@ def checked_result(result: Result, purpose: str) -> str:
 
 
 def socket_path(endpoint: str) -> Path:
+    """Accept only absolute Unix-socket endpoints, not TCP or SSH.
+    
+    This parses a context's declared address; verify_socket also checks the
+    actual filesystem object."""
     if not endpoint.startswith("unix://") or re.search(r"[\x00-\x1f\x7f]", endpoint):
         raise OperationError("Selected Docker context must use a local Unix socket")
     raw = endpoint[len("unix://"):]
@@ -137,6 +170,10 @@ def socket_path(endpoint: str) -> Path:
 
 
 def verify_socket(endpoint: str) -> None:
+    """Require an existing Unix socket owned by the calling user.
+    
+    Inspect without following a symlink. A context name alone is not
+    evidence that it selects the intended local engine."""
     path = socket_path(endpoint)
     try:
         entry = path.lstat()
@@ -147,6 +184,10 @@ def verify_socket(endpoint: str) -> None:
 
 
 class DockerClient:
+    """Send commands to one admitted engine using a private client configuration.
+    
+    Once the context is resolved, later operations reuse the stored endpoint;
+    inherited Docker settings cannot redirect individual calls."""
     def __init__(self, executor: Executor, environment: dict[str, str]):
         self.executor = executor
         self.environment = clean_environment(environment)
@@ -154,6 +195,10 @@ class DockerClient:
         self.config: Path | None = None
 
     def context(self, name: str) -> str:
+        """Resolve the named context and retain its verified Unix-socket endpoint.
+        
+        This reads the caller's context definitions but rejects nonlocal or
+        non-user-owned sockets rather than silently choosing another engine."""
         output = checked_result(
             self.executor.run(
                 ["docker", "context", "inspect", "--format", "{{.Endpoints.docker.Host}}", name],
@@ -167,6 +212,10 @@ class DockerClient:
         return output
 
     def call(self, *args: str, timeout: int = CLIENT_TIMEOUT) -> Result:
+        """Run an operation on the already selected engine.
+        
+        The endpoint and private configuration are explicit arguments to Docker.
+        The caller remains responsible for interpreting the returned exit status."""
         assert self.endpoint is not None and self.config is not None
         return self.executor.run(
             ["docker", "--config", str(self.config), "--host", self.endpoint, *args],
@@ -174,6 +223,10 @@ class DockerClient:
         )
 
     def engine(self) -> str:
+        """Admit only the rootless Linux/amd64 engine this runner supports.
+        
+        Require systemd with cgroup v2 for resource limits and return the daemon's
+        reported ID. This does not inspect individual container restrictions."""
         info = checked_result(self.call("info", "--format", "{{json .}}"), "Docker engine inspection")
         try:
             description = json.loads(info)
@@ -196,6 +249,10 @@ class DockerClient:
         return identity
 
     def image(self, reference: str, expected_id: str, acquire_hint: str) -> str:
+        """Check that the pinned image exists locally with the expected config ID.
+        
+        No download is attempted. Missing or mismatched images stop execution;
+        a missing image includes the caller's explicit acquisition command."""
         result = self.call("image", "inspect", "--format", "{{.Id}}", reference)
         if result.status != 0:
             raise OperationError(f"Pinned image is missing on the selected engine. {acquire_hint}")
@@ -205,6 +262,10 @@ class DockerClient:
         return identity
 
     def acquire(self, reference: str, expected_id: str) -> str:
+        """Pull the specified linux/amd64 image and verify its local config ID.
+        
+        This is the explicit networked acquisition path. Ordinary jobs only
+        inspect already acquired images."""
         checked_result(
             self.call("pull", "--platform=linux/amd64", reference, timeout=ACQUISITION_TIMEOUT),
             "Pinned image acquisition",
@@ -214,7 +275,10 @@ class DockerClient:
 
 @contextmanager
 def docker_client(environ: dict[str, str], executor: Executor | None = None):
-    """Select one context and allocate a private, empty client configuration."""
+    """Admit the selected engine for the duration of an operation.
+
+Refuse root callers, create a private client configuration, and remove it
+when the context exits. This does not own or retire Docker containers."""
     if os.geteuid() == 0 or os.getegid() == 0:
         raise OperationError("Confined operations must be invoked by a non-root user")
     context_name = required_context(environ)

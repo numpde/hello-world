@@ -1,4 +1,9 @@
-"""Run unittest discovery and report full failures after the summary."""
+"""Run unittest discovery and print complete failures after the summary.
+
+This program runs inside the test container, not in the Docker launcher.
+It accepts standard discovery options and reports an empty suite as failure.
+Tracebacks come last so the end of the log contains actionable errors.
+"""
 
 import argparse
 import os
@@ -8,6 +13,11 @@ import unittest
 
 
 def run(suite: unittest.TestSuite) -> int:
+    """Execute one suite and report the result without custom unittest classes.
+    
+    Collect failures, errors and unexpected successes, print totals first,
+    then print complete tracebacks. Skips and expected failures are not failures.
+    A suite containing no tests is rejected."""
     if suite.countTestCases() == 0:
         print("NO TESTS RAN: unittest discovery was empty", file=sys.stderr)
         return 1
@@ -41,6 +51,10 @@ def run(suite: unittest.TestSuite) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Parse standard unittest discovery flags and run the selected suite.
+    
+    The caller supplies the start directory, top-level directory and filename
+    pattern. Refuse root execution; container admission is checked elsewhere."""
     if os.geteuid() == 0 or os.getegid() == 0:
         print("Unittest runner must not run as root", file=sys.stderr)
         return 2

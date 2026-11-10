@@ -1,4 +1,10 @@
-"""Repository command integration, Docker client and finite-job contracts."""
+"""Exercise the repository command and Docker lifecycle without a daemon.
+
+The fake client supplies controlled Docker replies, including failed starts,
+ambiguous creates, invalid confinement and failed removal. These tests check
+command construction and failure reporting; they do not prove real engine
+behavior or effective operating-system isolation.
+"""
 
 from __future__ import annotations
 
@@ -27,7 +33,12 @@ ENGINE = {
 
 
 class FakeExecutor:
+    """Model the Docker CLI responses and resource state used by these tests.
+    
+    Every call is recorded. Flags can alter one observed outcome while keeping
+    the rest of the fake engine consistent for the lifecycle under test."""
     def __init__(self):
+        """Start with a successful fake engine and disabled fault injections."""
         self.calls = []
         self.present = False
         self.labels = {}
@@ -47,6 +58,10 @@ class FakeExecutor:
         self.image_present = True
 
     def run(self, argv, env, timeout):
+        """Return deterministic replies for the Docker commands used by the adapter.
+        
+        Creating a container writes the supplied CID file; list and inspection
+        queries report fake daemon state independently of client success."""
         self.calls.append((tuple(argv), env.copy(), timeout))
         args = argv[1:] if argv[:2] == ["docker", "context"] else argv[5:]
         if argv[:3] == ["docker", "context", "inspect"]:
@@ -119,7 +134,15 @@ class FakeExecutor:
 
 
 class RepositoryContainerContracts(unittest.TestCase):
+    """Test command-level behavior with an untrusted environment and fake engine.
+    
+    Failure scenarios establish what must be reported, cleaned up or retained;
+    they are not live security qualification."""
     def setUp(self):
+        """Create a minimal checkout and poison inherited Docker and proxy settings.
+        
+        Patch only host identity and socket inspection, leaving command dispatch
+        observable through the fake executor."""
         self.directory = tempfile.TemporaryDirectory(prefix="checker-fixture-")
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
@@ -148,12 +171,14 @@ class RepositoryContainerContracts(unittest.TestCase):
         self.addCleanup(self.socket_patch.stop)
 
     def execute(self, action="check"):
+        """Run the repository command and capture its public output and diagnostics."""
         output, errors = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
             status = repository.run_repository_command(action, self.environment, self.executor, self.root)
         return status, output.getvalue(), errors.getvalue()
 
     def test_success_contained_and_cleanup_verified(self):
+        """A successful job must still prove confinement, sanitize Docker inputs and retire its container."""
         status, output, errors = self.execute()
         self.assertEqual(status, 0, errors)
         self.assertIn("17 tests", output)
@@ -182,6 +207,7 @@ class RepositoryContainerContracts(unittest.TestCase):
         self.assertNotIn("Retained", errors)
 
     def test_failed_tests_fail_and_are_removed(self):
+        """A nonzero container exit is the authoritative failure even when attachment succeeds."""
         self.executor.exit_status = 1
         self.executor.source_output = "Ran 2 tests\nFAIL: test_example\n"
         status, output, errors = self.execute()
@@ -191,6 +217,7 @@ class RepositoryContainerContracts(unittest.TestCase):
         self.assertFalse(self.executor.present)
 
     def test_client_attach_failure_is_not_silently_a_success(self):
+        """Losing the Docker attachment must not turn a failed operation into success."""
         self.executor.failed_start = True
         status, _, errors = self.execute()
         self.assertEqual(status, 1)
@@ -198,6 +225,7 @@ class RepositoryContainerContracts(unittest.TestCase):
         self.assertFalse(self.executor.present)
 
     def test_timeout_on_running_container_still_retired(self):
+        """A client timeout does not stop the daemon's container; cleanup must inspect and remove it."""
         self.executor.work_timeout = True
         status, _, errors = self.execute()
         self.assertEqual(status, 1)
@@ -205,6 +233,7 @@ class RepositoryContainerContracts(unittest.TestCase):
         self.assertFalse(self.executor.present)
 
     def test_engine_that_ignores_confinement_cannot_start_checker(self):
+        """A created container with broader network access must be rejected before it starts."""
         self.executor.bad_confinement = True
         status, _, errors = self.execute()
         self.assertEqual(status, 1)
@@ -213,6 +242,7 @@ class RepositoryContainerContracts(unittest.TestCase):
         self.assertFalse(any("start" in args for args, _, _ in self.executor.calls))
 
     def test_public_root_file_permissions_are_checked(self):
+        """Do not mount source files that the unprivileged container cannot read."""
         source = self.root / "Makefile"
         source.chmod(0o600)
         self.addCleanup(lambda: source.chmod(0o644))
@@ -221,6 +251,7 @@ class RepositoryContainerContracts(unittest.TestCase):
         self.assertFalse(self.executor.present)
 
     def test_cancellation_removes_owned_container(self):
+        """A caller interruption still leaves the operation responsible for its container."""
         self.executor.cancel_start = True
         status, _, errors = self.execute()
         self.assertEqual(status, 1)
@@ -228,6 +259,7 @@ class RepositoryContainerContracts(unittest.TestCase):
         self.assertFalse(self.executor.present)
 
     def test_running_state_cannot_be_mistaken_for_exit_success(self):
+        """A successful attachment reply is not evidence that the workload has exited."""
         self.executor.bad_exit_state = True
         status, _, errors = self.execute()
         self.assertEqual(status, 1)
@@ -235,6 +267,7 @@ class RepositoryContainerContracts(unittest.TestCase):
         self.assertFalse(self.executor.present)
 
     def test_uncertain_creation_keeps_recovery_even_when_ps_is_empty(self):
+        """A timed-out create may complete later; an empty inspection cannot justify discarding recovery data."""
         self.executor.creation_timeout = True
         status, _, errors = self.execute()
         self.assertEqual(status, 1)
@@ -245,6 +278,7 @@ class RepositoryContainerContracts(unittest.TestCase):
         self.addCleanup(lambda: __import__("shutil").rmtree(Path(recovery).parent))
 
     def test_unconfirmed_cleanup_retains_receipt(self):
+        """Keep ownership evidence when Docker refuses to remove the container."""
         self.executor.failed_removal = True
         status, _, errors = self.execute()
         self.assertEqual(status, 1)
@@ -255,6 +289,7 @@ class RepositoryContainerContracts(unittest.TestCase):
         self.addCleanup(lambda: __import__("shutil").rmtree(path.parent))
 
     def test_ownership_mismatch_prohibits_deletion(self):
+        """A search-label match must never authorize deleting an unrelated container."""
         self.executor.malformed_ownership = True
         status, _, errors = self.execute()
         self.assertEqual(status, 1)
@@ -264,6 +299,7 @@ class RepositoryContainerContracts(unittest.TestCase):
         self.addCleanup(lambda: __import__("shutil").rmtree(path.parent))
 
     def test_parallel_test_command_is_an_adapter_choice(self):
+        """Switching to unittest-parallel must change only the job command, not its container grants."""
         replacement = finite_job.Command(
             executable="unittest-parallel",
             arguments=(*repository.UNITTEST_DISCOVERY_ARGS, "--level=module", "-j", "2"),
@@ -275,6 +311,7 @@ class RepositoryContainerContracts(unittest.TestCase):
         self.assertNotIn("/workspace/infrastructure/testing/unittest_runner.py", create)
 
     def test_generic_job_does_not_depend_on_repository_checks(self):
+        """A finite Docker job can execute an unrelated command without importing test selection."""
         job = finite_job.Job(
             image_id=repository.CHECKER_IMAGE_ID,
             command=finite_job.Command("/bin/echo", ("hello",)),
@@ -285,6 +322,7 @@ class RepositoryContainerContracts(unittest.TestCase):
         self.assertIn("--entrypoint=/bin/echo", create)
 
     def test_networked_acquisition_is_separate(self):
+        """Image acquisition may pull; offline repository checking must not."""
         status, output, errors = self.execute("acquire")
         self.assertEqual(status, 0, errors)
         self.assertIn("Acquired checker image", output)
@@ -293,12 +331,14 @@ class RepositoryContainerContracts(unittest.TestCase):
         self.assertFalse(any("create" in argv for argv in calls))
 
     def test_missing_pinned_image_has_explicit_remedy(self):
+        """An absent image requires an explicit acquisition command, not an implicit download."""
         self.executor.image_present = False
         with self.assertRaisesRegex(docker_client.OperationError, "repository/image/acquire"):
             self.execute()
         self.assertFalse(self.executor.present)
 
     def test_reject_nonrootless_and_missing_cgroup_enforcement(self):
+        """Do not run when the selected daemon cannot meet the declared security and resource requirements."""
         for changed in ({"SecurityOptions": []}, {"CgroupVersion": "1"}, {"Architecture": "arm64"}):
             with self.subTest(changed=changed):
                 self.executor.engine = ENGINE | changed
@@ -307,6 +347,7 @@ class RepositoryContainerContracts(unittest.TestCase):
                 self.assertFalse(self.executor.present)
 
     def test_explicit_selection_not_ambient_default(self):
+        """Malformed or missing selection must fail before any Docker call, despite ambient settings."""
         for input_name in (None, "", "../../engine", "bad context", "$(shell touch /tmp/nope)"):
             with self.subTest(input_name=input_name):
                 self.environment["HELLO_WORLD_DOCKER_CONTEXT"] = input_name
@@ -315,11 +356,13 @@ class RepositoryContainerContracts(unittest.TestCase):
         self.assertFalse(self.executor.calls)
 
     def test_remote_endpoint_rejected(self):
+        """A Docker context pointing at a remote daemon must not be admitted as local."""
         self.executor.endpoint = "tcp://not-allowed:2376"
         with self.assertRaisesRegex(docker_client.OperationError, "local Unix socket"):
             self.execute()
 
     def test_source_symlink_and_unknown_root_rejected_before_create(self):
+        """Unclassified files or symlinks must fail before any container obtains source access."""
         extra = self.root / "config.env"
         extra.write_text("SECRET=hello")
         with self.assertRaisesRegex(docker_client.OperationError, "Unclassified"):
@@ -331,6 +374,7 @@ class RepositoryContainerContracts(unittest.TestCase):
         self.assertFalse(self.executor.present)
 
     def test_private_roots_are_never_mounted(self):
+        """Git metadata and secrets remain invisible even when they exist beside public files."""
         (self.root / ".git").mkdir()
         (self.root / ".git" / "config").write_text("private")
         (self.root / "secrets").mkdir()
@@ -340,6 +384,7 @@ class RepositoryContainerContracts(unittest.TestCase):
         self.assertFalse(any("secrets" in str(value.source) or "/.git" in str(value.source) for value in mounts))
 
     def test_full_ids_only_and_no_collision(self):
+        """Cleanup requires unique full IDs; shortened or duplicated IDs are not safe deletion targets."""
         with self.assertRaisesRegex(docker_client.OperationError, "malformed"):
             finite_job.container_ids("abc\n")
         with self.assertRaisesRegex(docker_client.OperationError, "duplicate"):
@@ -347,7 +392,9 @@ class RepositoryContainerContracts(unittest.TestCase):
 
 
 class NativeClientContracts(unittest.TestCase):
+    """Test the local process wrapper directly, without invoking Docker."""
     def test_capture_is_bounded_even_for_large_output(self):
+        """The native client must drain long output without retaining unbounded memory."""
         client = docker_client.NativeExecutor()
         command = [sys.executable, "-I", "-c", "import sys;sys.stdout.write('x'*1500000)"]
         result = client.run(command, docker_client.clean_environment(os.environ.copy()), timeout=10)
@@ -356,6 +403,7 @@ class NativeClientContracts(unittest.TestCase):
         self.assertEqual(len(result.output), docker_client.MAX_OUTPUT)
 
     def test_native_timeout_does_not_leave_its_client(self):
+        """The local subprocess is terminated at its deadline, independently of any daemon work."""
         client = docker_client.NativeExecutor()
         command = [sys.executable, "-I", "-c", "import time;time.sleep(30)"]
         with self.assertRaises(TimeoutError):
@@ -363,7 +411,9 @@ class NativeClientContracts(unittest.TestCase):
 
 
 class InputContracts(unittest.TestCase):
+    """Test admission of endpoint addresses and propagation of client errors."""
     def test_socket_addresses(self):
+        """Reject remote, relative and malformed endpoints before connecting to Docker."""
         self.assertEqual(str(docker_client.socket_path("unix:///run/user/1000/docker.sock")),
                          "/run/user/1000/docker.sock")
         for endpoint in ("tcp://elsewhere", "unix://relative", "unix:///a\nb", "ssh://hostname", "unix:///a?b"):
@@ -371,6 +421,7 @@ class InputContracts(unittest.TestCase):
                 docker_client.socket_path(endpoint)
 
     def test_owned_rootless_socket_requires_actual_socket(self):
+        """A plain user-owned file is not enough to establish a local Docker endpoint."""
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "not-a-socket"
             path.write_text("fake")
@@ -378,6 +429,7 @@ class InputContracts(unittest.TestCase):
                 docker_client.verify_socket("unix://" + str(path))
 
     def test_checked_result_does_not_relabel_errors(self):
+        """Retain the original Docker exit status and diagnostic text for callers."""
         with self.assertRaisesRegex(docker_client.OperationError, "exit 33"):
             docker_client.checked_result(docker_client.Result(33, "trace was retained"), "context")
 
