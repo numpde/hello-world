@@ -1,10 +1,10 @@
 """Run repository tests and report their failures after the summary."""
 
+import argparse
 import os
 import sys
 import time
 import unittest
-from pathlib import Path
 
 
 def run(suite: unittest.TestSuite) -> int:
@@ -40,16 +40,20 @@ def run(suite: unittest.TestSuite) -> int:
     return 1
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     if os.geteuid() == 0 or os.getegid() == 0:
         print("Repository checker must not run as root", file=sys.stderr)
         return 2
 
-    root = Path(__file__).resolve().parents[2]
+    parser = argparse.ArgumentParser(description="Run repository tests and report failures last")
+    parser.add_argument("-s", "--start-directory", required=True)
+    parser.add_argument("-t", "--top-level-directory", required=True)
+    parser.add_argument("-p", "--pattern", required=True)
+    args = parser.parse_args(argv)
     suite = unittest.defaultTestLoader.discover(
-        start_dir=str(root / "tests/repository"),
-        top_level_dir=str(root),
-        pattern="test_*.py",
+        start_dir=args.start_directory,
+        top_level_dir=args.top_level_directory,
+        pattern=args.pattern,
     )
     return run(suite)
 

@@ -16,7 +16,7 @@ help: ## Show maintained commands; no Docker, network, prompts, or writes.
 	@awk -F ':[^#]*## ' '/^[a-z][a-z0-9/-]*:.*## / { printf "  %-28s %s\n", $$1, $$2 }' Makefile
 
 repository/check: ## Run repository checks offline in a confined Docker container.
-	@python3 tools/repository/operation.py check
+	@python3 -m tools.repository.operation check
 
 repository/image/acquire: ## Explicitly acquire the pinned repository-checker image.
-	@python3 tools/repository/operation.py acquire
+	@python3 -m tools.repository.operation acquire

@@ -12,6 +12,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from tools.container import runner as core
 from tools.repository import operation as checker
 
 
@@ -48,13 +49,13 @@ class FakeExecutor:
         self.calls.append((tuple(argv), env.copy(), timeout))
         args = argv[1:] if argv[:2] == ["docker", "context"] else argv[5:]
         if argv[:3] == ["docker", "context", "inspect"]:
-            return checker.Result(0, self.endpoint + "\n")
+            return core.Result(0, self.endpoint + "\n")
         if args[:2] == ["info", "--format"]:
-            return checker.Result(0, json.dumps(self.engine) + "\n")
+            return core.Result(0, json.dumps(self.engine) + "\n")
         if args[:2] == ["image", "inspect"]:
-            return checker.Result(0, checker.IMAGE_ID + "\n") if self.image_present else checker.Result(1, "No such image")
+            return core.Result(0, checker.IMAGE_ID + "\n") if self.image_present else core.Result(1, "No such image")
         if args[:1] == ["pull"]:
-            return checker.Result(0, "Downloaded pinned digest\n")
+            return core.Result(0, "Downloaded pinned digest\n")
         if args[:1] == ["create"]:
             if self.creation_timeout:
                 raise TimeoutError("create timed out")
@@ -73,18 +74,18 @@ class FakeExecutor:
                 }
                 for part in args if part.startswith("type=bind,")
             ]
-            return checker.Result(0, IDENTIFIER + "\n")
+            return core.Result(0, IDENTIFIER + "\n")
         if args[:1] == ["ps"]:
-            return checker.Result(0, IDENTIFIER + "\n" if self.present else "")
+            return core.Result(0, IDENTIFIER + "\n" if self.present else "")
         if args[:3] == ["container", "inspect", "--format"]:
             if args[3] == "{{json .State}}":
                 state = {"Running": False, "ExitCode": self.exit_status}
                 if self.bad_exit_state:
                     state = {"Running": True, "ExitCode": 0}
-                return checker.Result(0, json.dumps(state) + "\n")
+                return core.Result(0, json.dumps(state) + "\n")
             labels = self.labels.copy()
             if self.malformed_ownership:
-                labels[checker.IDENTITY_LABEL] = "not-our-operation"
+                labels[core.IDENTITY_LABEL] = "not-our-operation"
             host = {
                 "NetworkMode": "none", "ReadonlyRootfs": True, "Privileged": False,
                 "NanoCpus": 2_000_000_000, "Memory": 536_870_912,
@@ -95,24 +96,24 @@ class FakeExecutor:
             }
             if self.bad_confinement:
                 host["NetworkMode"] = "bridge"
-            return checker.Result(0, json.dumps({
+            return core.Result(0, json.dumps({
                 "Id": IDENTIFIER, "Image": checker.IMAGE_ID,
                 "Config": {"Labels": labels, "User": "65532:65532"},
                 "HostConfig": host, "Mounts": self.mounts,
             }))
         if args[:1] == ["start"]:
             if self.cancel_start:
-                raise checker.Cancelled("caller interrupted work")
+                raise core.Cancelled("caller interrupted work")
             if self.work_timeout:
                 raise TimeoutError("attachment timed out")
             if self.failed_start:
-                return checker.Result(1, "Docker client failed to attach")
-            return checker.Result(0, self.source_output)
+                return core.Result(1, "Docker client failed to attach")
+            return core.Result(0, self.source_output)
         if args[:1] == ["rm"]:
             if self.failed_removal:
-                return checker.Result(1, "rm rejected")
+                return core.Result(1, "rm rejected")
             self.present = False
-            return checker.Result(0, IDENTIFIER + "\n")
+            return core.Result(0, IDENTIFIER + "\n")
         raise AssertionError(f"Unexpected Docker call: {argv}")
 
 
@@ -135,10 +136,10 @@ class OperationContracts(unittest.TestCase):
             "HTTP_PROXY": "http://untrusted", "HTTPS_PROXY": "http://untrusted",
             "PYTHONPATH": "/untrusted", "AWS_SECRET_ACCESS_KEY": "nope",
         }
-        self.uid_patch = patch.object(checker.os, "geteuid", return_value=1000)
+        self.uid_patch = patch.object(core.os, "geteuid", return_value=1000)
         self.uid_patch.start()
         self.addCleanup(self.uid_patch.stop)
-        self.gid_patch = patch.object(checker.os, "getegid", return_value=1000)
+        self.gid_patch = patch.object(core.os, "getegid", return_value=1000)
         self.gid_patch.start()
         self.addCleanup(self.gid_patch.stop)
         self.socket_patch = patch.object(checker, "verify_socket")
@@ -214,7 +215,7 @@ class OperationContracts(unittest.TestCase):
         source = self.root / "Makefile"
         source.chmod(0o600)
         self.addCleanup(lambda: source.chmod(0o644))
-        with self.assertRaisesRegex(checker.OperationError, "non-public"):
+        with self.assertRaisesRegex(core.OperationError, "non-public"):
             self.execute()
         self.assertFalse(self.executor.present)
 
@@ -261,6 +262,27 @@ class OperationContracts(unittest.TestCase):
         path = Path(errors.split("Retained recovery record: ", 1)[1].splitlines()[0])
         self.addCleanup(lambda: __import__("shutil").rmtree(path.parent))
 
+    def test_parallel_test_command_is_an_adapter_choice(self):
+        replacement = core.Command(
+            executable="unittest-parallel",
+            arguments=(*checker.DISCOVERY, "--level=module", "-j", "2"),
+        )
+        job = checker.checker_job(self.root, checker.IMAGE_ID, replacement)
+        create = core.container_arguments(job, "test-token", "test-owner")
+        self.assertIn("--entrypoint=unittest-parallel", create)
+        self.assertEqual(tuple(create[-len(replacement.arguments):]), replacement.arguments)
+        self.assertNotIn("/workspace/tools/repository/checks.py", create)
+
+    def test_generic_job_does_not_depend_on_repository_checks(self):
+        job = core.Job(
+            image_id=checker.IMAGE_ID,
+            command=core.Command("/bin/echo", ("hello",)),
+            mounts=(),
+        )
+        create = core.container_arguments(job, "test-token", "test-owner")
+        self.assertEqual(create[-2:], [checker.IMAGE_ID, "hello"])
+        self.assertIn("--entrypoint=/bin/echo", create)
+
     def test_networked_acquisition_is_separate(self):
         status, output, errors = self.execute("acquire")
         self.assertEqual(status, 0, errors)
@@ -271,7 +293,7 @@ class OperationContracts(unittest.TestCase):
 
     def test_missing_pinned_image_has_explicit_remedy(self):
         self.executor.image_present = False
-        with self.assertRaisesRegex(checker.OperationError, "repository/image/acquire"):
+        with self.assertRaisesRegex(core.OperationError, "repository/image/acquire"):
             self.execute()
         self.assertFalse(self.executor.present)
 
@@ -279,7 +301,7 @@ class OperationContracts(unittest.TestCase):
         for changed in ({"SecurityOptions": []}, {"CgroupVersion": "1"}, {"Architecture": "arm64"}):
             with self.subTest(changed=changed):
                 self.executor.engine = ENGINE | changed
-                with self.assertRaises(checker.OperationError):
+                with self.assertRaises(core.OperationError):
                     self.execute()
                 self.assertFalse(self.executor.present)
 
@@ -287,23 +309,23 @@ class OperationContracts(unittest.TestCase):
         for input_name in (None, "", "../../engine", "bad context", "$(shell touch /tmp/nope)"):
             with self.subTest(input_name=input_name):
                 self.environment["HELLO_WORLD_DOCKER_CONTEXT"] = input_name
-                with self.assertRaises(checker.OperationError):
+                with self.assertRaises(core.OperationError):
                     self.execute()
         self.assertFalse(self.executor.calls)
 
     def test_remote_endpoint_rejected(self):
         self.executor.endpoint = "tcp://not-allowed:2376"
-        with self.assertRaisesRegex(checker.OperationError, "local Unix socket"):
+        with self.assertRaisesRegex(core.OperationError, "local Unix socket"):
             self.execute()
 
     def test_source_symlink_and_unknown_root_rejected_before_create(self):
         extra = self.root / "config.env"
         extra.write_text("SECRET=hello")
-        with self.assertRaisesRegex(checker.OperationError, "Unclassified"):
+        with self.assertRaisesRegex(core.OperationError, "Unclassified"):
             self.execute()
         extra.unlink()
         (self.root / "tools" / "link").symlink_to("/etc/passwd")
-        with self.assertRaisesRegex(checker.OperationError, "Refusing link"):
+        with self.assertRaisesRegex(core.OperationError, "Refusing link"):
             self.execute()
         self.assertFalse(self.executor.present)
 
@@ -313,50 +335,50 @@ class OperationContracts(unittest.TestCase):
         (self.root / "secrets").mkdir()
         (self.root / "secrets" / "key").write_text("private")
         mounts = checker.public_mounts(self.root)
-        self.assertEqual(len(mounts), 6)
-        self.assertFalse(any("secrets" in value or "/.git" in value for value in mounts))
+        self.assertEqual(len(mounts), 3)
+        self.assertFalse(any("secrets" in str(value.source) or "/.git" in str(value.source) for value in mounts))
 
     def test_full_ids_only_and_no_collision(self):
-        with self.assertRaisesRegex(checker.OperationError, "malformed"):
-            checker.container_ids("abc\n")
-        with self.assertRaisesRegex(checker.OperationError, "duplicate"):
-            checker.container_ids(IDENTIFIER + "\n" + IDENTIFIER + "\n")
+        with self.assertRaisesRegex(core.OperationError, "malformed"):
+            core.container_ids("abc\n")
+        with self.assertRaisesRegex(core.OperationError, "duplicate"):
+            core.container_ids(IDENTIFIER + "\n" + IDENTIFIER + "\n")
 
 
 class NativeClientContracts(unittest.TestCase):
     def test_capture_is_bounded_even_for_large_output(self):
-        client = checker.NativeExecutor()
+        client = core.NativeExecutor()
         command = [sys.executable, "-I", "-c", "import sys;sys.stdout.write('x'*1500000)"]
-        result = client.run(command, checker.clean_environment(os.environ.copy()), timeout=10)
+        result = client.run(command, core.clean_environment(os.environ.copy()), timeout=10)
         self.assertEqual(result.status, 0)
         self.assertTrue(result.truncated)
-        self.assertEqual(len(result.output), checker.MAX_OUTPUT)
+        self.assertEqual(len(result.output), core.MAX_OUTPUT)
 
     def test_native_timeout_does_not_leave_its_client(self):
-        client = checker.NativeExecutor()
+        client = core.NativeExecutor()
         command = [sys.executable, "-I", "-c", "import time;time.sleep(30)"]
         with self.assertRaises(TimeoutError):
-            client.run(command, checker.clean_environment(os.environ.copy()), timeout=1)
+            client.run(command, core.clean_environment(os.environ.copy()), timeout=1)
 
 
 class InputContracts(unittest.TestCase):
     def test_socket_addresses(self):
-        self.assertEqual(str(checker.socket_path("unix:///run/user/1000/docker.sock")),
+        self.assertEqual(str(core.socket_path("unix:///run/user/1000/docker.sock")),
                          "/run/user/1000/docker.sock")
         for endpoint in ("tcp://elsewhere", "unix://relative", "unix:///a\nb", "ssh://hostname", "unix:///a?b"):
-            with self.subTest(endpoint=endpoint), self.assertRaises(checker.OperationError):
-                checker.socket_path(endpoint)
+            with self.subTest(endpoint=endpoint), self.assertRaises(core.OperationError):
+                core.socket_path(endpoint)
 
     def test_owned_rootless_socket_requires_actual_socket(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "not-a-socket"
             path.write_text("fake")
-            with self.assertRaisesRegex(checker.OperationError, "user-owned"):
-                checker.verify_socket("unix://" + str(path))
+            with self.assertRaisesRegex(core.OperationError, "user-owned"):
+                core.verify_socket("unix://" + str(path))
 
     def test_checked_result_does_not_relabel_errors(self):
-        with self.assertRaisesRegex(checker.OperationError, "exit 33"):
-            checker.checked_result(checker.Result(33, "trace was retained"), "context")
+        with self.assertRaisesRegex(core.OperationError, "exit 33"):
+            core.checked_result(core.Result(33, "trace was retained"), "context")
 
 
 if __name__ == "__main__":
