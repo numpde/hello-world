@@ -1,4 +1,4 @@
-"""Run repository checks through the shared finite-job container finite_job."""
+"""Select repository check inputs and invoke a confined finite Docker job."""
 
 from __future__ import annotations
 
@@ -11,12 +11,12 @@ from pathlib import Path
 from tools.container import finite_job
 
 
-ROOT = Path(__file__).resolve().parents[2]
-IMAGE = (
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+CHECKER_IMAGE_REFERENCE = (
     "docker.io/library/python:3.12.16-slim-bookworm@"
     "sha256:623674a14ef93d052bb9b0de4dbf5f28eb578a35263838941cc8aa43213c1487"
 )
-IMAGE_ID = "sha256:37ccb536022bb36c4570856b55ebfa85bf07827e3c2fa3eba37f0dac62eebc05"
+CHECKER_IMAGE_ID = "sha256:37ccb536022bb36c4570856b55ebfa85bf07827e3c2fa3eba37f0dac62eebc05"
 PUBLIC_ROOTS = frozenset({"Makefile", "notes", "tools", "tests", ".github", ".gitignore", "README.md", "pyproject.toml"})
 PRIVATE_ROOTS = frozenset({".git", ".agents", ".codex", ".aws", ".venv", ".pytest_cache", "__pycache__", ".env", "secrets", "build", "dist"})
 
@@ -77,19 +77,19 @@ def run_repository_command(
     action: str,
     environ: dict[str, str],
     executor: finite_job.Executor | None = None,
-    root: Path = ROOT,
+    root: Path = REPOSITORY_ROOT,
 ) -> int:
     if action not in {"check", "acquire"}:
         raise finite_job.OperationError(f"Unknown repository operation: {action}")
     context_name = finite_job.required_context(environ)
     with finite_job.docker_client(environ, executor) as docker:
         if action == "acquire":
-            docker.acquire(IMAGE, IMAGE_ID)
-            print(f"Acquired checker image {IMAGE_ID} on Docker context {context_name}.")
+            docker.acquire(CHECKER_IMAGE_REFERENCE, CHECKER_IMAGE_ID)
+            print(f"Acquired checker image {CHECKER_IMAGE_ID} on Docker context {context_name}.")
             return 0
         image_id = docker.image(
-            reference=IMAGE,
-            expected_id=IMAGE_ID,
+            reference=CHECKER_IMAGE_REFERENCE,
+            expected_id=CHECKER_IMAGE_ID,
             acquire_hint="Run: make repository/image/acquire DOCKER_CONTEXT=<context>",
         )
         outcome = finite_job.run_container(docker, context_name, repository_test_job(root, image_id))

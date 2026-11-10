@@ -53,7 +53,7 @@ class FakeExecutor:
         if args[:2] == ["info", "--format"]:
             return finite_job.Result(0, json.dumps(self.engine) + "\n")
         if args[:2] == ["image", "inspect"]:
-            return finite_job.Result(0, checker.IMAGE_ID + "\n") if self.image_present else finite_job.Result(1, "No such image")
+            return finite_job.Result(0, checker.CHECKER_IMAGE_ID + "\n") if self.image_present else finite_job.Result(1, "No such image")
         if args[:1] == ["pull"]:
             return finite_job.Result(0, "Downloaded pinned digest\n")
         if args[:1] == ["create"]:
@@ -97,7 +97,7 @@ class FakeExecutor:
             if self.bad_confinement:
                 host["NetworkMode"] = "bridge"
             return finite_job.Result(0, json.dumps({
-                "Id": IDENTIFIER, "Image": checker.IMAGE_ID,
+                "Id": IDENTIFIER, "Image": checker.CHECKER_IMAGE_ID,
                 "Config": {"Labels": labels, "User": "65532:65532"},
                 "HostConfig": host, "Mounts": self.mounts,
             }))
@@ -164,7 +164,7 @@ class RepositoryContainerContracts(unittest.TestCase):
             "--security-opt=no-new-privileges:true", "--user=65532:65532",
             "--pids-limit=64", "--memory=512m", "--memory-swap=512m",
             "--cpus=2", "--log-driver=none", "--platform=linux/amd64",
-            checker.IMAGE_ID,
+            checker.CHECKER_IMAGE_ID,
         ):
             self.assertTrue(any(required in value for value in create), required)
         mounts = [create[index + 1] for index, value in enumerate(create) if value == "--mount"]
@@ -267,7 +267,7 @@ class RepositoryContainerContracts(unittest.TestCase):
             executable="unittest-parallel",
             arguments=(*checker.UNITTEST_DISCOVERY_ARGS, "--level=module", "-j", "2"),
         )
-        job = checker.repository_test_job(self.root, checker.IMAGE_ID, replacement)
+        job = checker.repository_test_job(self.root, checker.CHECKER_IMAGE_ID, replacement)
         create = finite_job.container_arguments(job, "test-token", "test-owner")
         self.assertIn("--entrypoint=unittest-parallel", create)
         self.assertEqual(tuple(create[-len(replacement.arguments):]), replacement.arguments)
@@ -275,12 +275,12 @@ class RepositoryContainerContracts(unittest.TestCase):
 
     def test_generic_job_does_not_depend_on_repository_checks(self):
         job = finite_job.Job(
-            image_id=checker.IMAGE_ID,
+            image_id=checker.CHECKER_IMAGE_ID,
             command=finite_job.Command("/bin/echo", ("hello",)),
             mounts=(),
         )
         create = finite_job.container_arguments(job, "test-token", "test-owner")
-        self.assertEqual(create[-2:], [checker.IMAGE_ID, "hello"])
+        self.assertEqual(create[-2:], [checker.CHECKER_IMAGE_ID, "hello"])
         self.assertIn("--entrypoint=/bin/echo", create)
 
     def test_networked_acquisition_is_separate(self):
