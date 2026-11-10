@@ -87,10 +87,10 @@ check any daemon-side effects."""
                     remaining_seconds = client_deadline - time.monotonic()
                     if remaining_seconds <= 0:
                         raise TimeoutError(f"Docker client exceeded {timeout}s")
-                    for key, _ in output_selector.select(min(remaining_seconds, 0.5)):
-                        output_chunk = os.read(key.fileobj.fileno(), 65536)
+                    for selected_event, _ in output_selector.select(min(remaining_seconds, 0.5)):
+                        output_chunk = os.read(selected_event.fileobj.fileno(), 65536)
                         if not output_chunk:
-                            output_selector.unregister(key.fileobj)
+                            output_selector.unregister(selected_event.fileobj)
                             continue
                         captured_output.extend(output_chunk)
                         if len(captured_output) > MAX_OUTPUT:

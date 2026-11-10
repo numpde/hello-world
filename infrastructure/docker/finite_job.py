@@ -96,7 +96,7 @@ def container_arguments(job: Job, token: str, owner: str) -> list[str]:
     not selectable through an arbitrary list of Docker flags.
     """
     if not re.fullmatch(r"sha256:[0-9a-f]{64}", job.image_id):
-        raise OperationError(f"A verified immutable image ID is required: {job.image_id = }")
+        raise OperationError(f"Expected sha256 digest for {job.image_id = }")
 
     container_entrypoint = job.command.executable
     if not container_entrypoint or (not container_entrypoint.startswith("/") and "/" in container_entrypoint):
@@ -329,10 +329,12 @@ def cleanup(docker: DockerClient, token: str, owner: str, image_id: str) -> None
 
     def remaining_cleanup_timeout() -> int:
         """Bound each cleanup request by the time left for the whole cleanup."""
-        seconds = cleanup_deadline - time.monotonic()
-        if seconds <= 0:
+        remaining_cleanup_seconds = cleanup_deadline - time.monotonic()
+
+        if remaining_cleanup_seconds <= 0:
             raise TimeoutError("Docker cleanup budget exhausted")
-        return min(CLIENT_TIMEOUT, max(1, int(seconds)))
+
+        return min(CLIENT_TIMEOUT, max(1, int(remaining_cleanup_seconds)))
 
     owned_container_ids = owned_containers(docker, token, owner, image_id, timeout=remaining_cleanup_timeout)
 
@@ -442,7 +444,7 @@ def run_container(docker: DockerClient, context: str, job: Job) -> Outcome:
         container_id = cid_receipt.read_text(encoding="ascii").strip()
 
         if not CONTAINER_ID.fullmatch(container_id):
-            raise OperationError(f"Invalid Docker CID receipt: {container_id = }")
+            raise OperationError(f"Invalid Docker CID receipt {container_id = }")
         if reported_container_id != container_id:
             raise OperationError(
                 f"Docker container creation and CID receipt disagree: {reported_container_id = }, {container_id = }"
