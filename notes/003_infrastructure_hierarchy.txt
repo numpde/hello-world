@@ -39,7 +39,7 @@ Long-term hierarchy, now
             test_unittest_runner.py        # test-framework results and failure-last
         repo-checks/
             __init__.py
-            test_architecture.py    # dependency direction and discovery
+            test_discovery.py       # all test directories must be discovered
             test_make.py            # Make's public contract
     notes/
         000_...
