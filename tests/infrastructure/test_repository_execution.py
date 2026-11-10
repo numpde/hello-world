@@ -44,6 +44,7 @@ class FakeExecutor:
         self.container_labels = {}
         self.workload_exit_status = 0
         self.failed_start = False
+        self.attachment_truncated = False
         self.malformed_ownership = False
         self.failed_removal = False
         self.creation_timeout = False
@@ -124,8 +125,8 @@ class FakeExecutor:
             if self.work_timeout:
                 raise TimeoutError("attachment timed out")
             if self.failed_start:
-                return docker_client.Result(1, "Docker client failed to attach")
-            return docker_client.Result(0, self.workload_output)
+                return docker_client.Result(1, "Docker client failed to attach", self.attachment_truncated)
+            return docker_client.Result(0, self.workload_output, self.attachment_truncated)
         if docker_arguments[:1] == ["rm"]:
             if self.failed_removal:
                 return docker_client.Result(1, "rm rejected")
@@ -231,6 +232,20 @@ class RepositoryContainerContracts(unittest.TestCase):
         status, _, errors = self.execute()
         self.assertEqual(status, 1)
         self.assertIn("attachment failed", errors)
+        self.assertFalse(self.executor.container_present)
+
+    def test_simultaneous_failures_preserve_secondary_evidence(self):
+        """The final exit is primary, while truncated output and attachment failure remain visible."""
+        self.executor.failed_start = True
+        self.executor.attachment_truncated = True
+        self.executor.workload_exit_status = 9
+
+        (operation_status, _, diagnostics) = self.execute()
+
+        self.assertEqual(operation_status, 1)
+        self.assertIn("container exit 9", diagnostics)
+        self.assertIn("attachment failed", diagnostics)
+        self.assertIn("tail retained", diagnostics)
         self.assertFalse(self.executor.container_present)
 
     def test_timeout_on_running_container_still_retired(self):

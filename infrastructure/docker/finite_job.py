@@ -436,8 +436,8 @@ def run_container(docker: DockerClient, context: str, job: Job) -> Outcome:
     recovery_directory: Path | None = operation_directory
     container_create_confirmed = False
 
-    job_failure: str | None = None
     job_output = ""
+    failure_reasons = []
     operation_diagnostics = []
     operation_status = 0
 
@@ -490,7 +490,7 @@ def run_container(docker: DockerClient, context: str, job: Job) -> Outcome:
         docker_attachment_result = docker.call("start", "--attach", container_id, timeout=WORK_TIMEOUT)
         job_output = docker_attachment_result.output
         if docker_attachment_result.truncated:
-            job_failure = f"Container output exceeded {MAX_OUTPUT} bytes; tail retained"
+            failure_reasons.append(f"Container output exceeded {MAX_OUTPUT} bytes; tail retained")
 
         # The attachment client may finish while the workload is still running.
         # Only the daemon's final state establishes the workload exit status.
@@ -510,13 +510,13 @@ def run_container(docker: DockerClient, context: str, job: Job) -> Outcome:
             raise OperationError("Container stopped without a verified final exit status")
 
         if docker_attachment_result.status != 0:
-            job_failure = f"Docker attachment failed ({docker_attachment_result.status = })"
+            failure_reasons.append(f"Docker attachment failed ({docker_attachment_result.status = })")
         if container_exit_code != 0:
             # The command adapter currently recognizes this message prefix.
-            job_failure = f"Container exited with status {container_exit_code}"
+            failure_reasons.append(f"Container exited with status {container_exit_code}")
 
     except (OperationError, TimeoutError, OSError, KeyboardInterrupt) as error:
-        job_failure = str(error) or error.__class__.__name__
+        failure_reasons.append(str(error) or error.__class__.__name__)
     finally:
         # Even a timed-out create can finish on the daemon. Inspect before
         # declaring retirement; keep recovery information if uncertain.
@@ -551,15 +551,18 @@ def run_container(docker: DockerClient, context: str, job: Job) -> Outcome:
                         operation_status = 1
                         operation_diagnostics.append(f"Cannot remove operation record: {operation_directory = }, {error = }")
 
-    if job_failure is not None:
+    # The inspected workload exit takes precedence. Retain earlier evidence
+    # instead of overwriting it when several failures occurred.
+    if failure_reasons:
         operation_status = 1
+        operation_diagnostics.extend(failure_reasons[:-1])
     if recovery_directory is not None:
         operation_diagnostics.append(f"Retained operation: {recovery_directory}")
 
     return Outcome(
         status=operation_status,
         output=job_output,
-        failure=job_failure,
+        failure=failure_reasons[-1] if failure_reasons else None,
         diagnostics=tuple(operation_diagnostics),
         recovery=recovery_directory,
     )
