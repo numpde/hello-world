@@ -73,7 +73,7 @@ class ArchitectureContracts(unittest.TestCase):
         expected = {
             directory.name
             for directory in tests_root.iterdir()
-            if directory.is_dir() and (directory / "__init__.py").is_file()
+            if directory.is_dir()
         }
         discovered = {case.id().split(".")[1] for case in cases(suite)}
 
