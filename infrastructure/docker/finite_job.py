@@ -36,8 +36,8 @@ CLEANUP_TIMEOUT = 25
 CONTAINER_ID = re.compile(r"[0-9a-f]{64}\Z")
 UNSAFE_MOUNT_PATH = re.compile(r"[,\n\r\x00]")
 
-# These values govern both the requested Docker flags and inspection of the
-# resulting container. The two observations remain independent.
+# Use one fixed policy for Docker arguments and the expected daemon state.
+# Inspection still checks what the daemon applied, not what was requested.
 CONTAINER_USER = "65532:65532"
 CPU_LIMIT = 2
 MEMORY_LIMIT_MIB = 512
