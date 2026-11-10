@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 import shutil
@@ -371,6 +372,14 @@ class RepositoryContainerContracts(unittest.TestCase):
         self.addCleanup(lambda: source.chmod(0o644))
         with self.assertRaisesRegex(docker_client.OperationError, "non-public"):
             self.execute()
+        self.assertFalse(self.executor.container_present)
+
+    def test_worker_thread_can_retire_its_container(self):
+        """A worker can complete cleanup without attempting to install signal handlers."""
+        with ThreadPoolExecutor(max_workers=1) as worker_pool:
+            (operation_status, _, errors) = worker_pool.submit(self.execute).result()
+
+        self.assertEqual(operation_status, 0, errors)
         self.assertFalse(self.executor.container_present)
 
     def test_cancellation_removes_owned_container(self):

@@ -14,6 +14,7 @@ import re
 import secrets
 import signal
 import tempfile
+import threading
 import time
 from collections.abc import Callable
 from contextlib import contextmanager
@@ -427,16 +428,20 @@ def write_receipt(
 
 @contextmanager
 def protected_cleanup():
-    """Temporarily ignore terminal signals while retiring owned resources.
+    """Ignore terminal signals during main-thread resource retirement.
 
-    The caller records the primary interruption; this guard prevents another
-    signal from skipping cleanup and restores the previous handlers afterward.
+    Only the main thread can install signal handlers. A worker performs the
+    cleanup without changing process-wide handlers; its caller owns shutdown.
     """
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+
     terminal_signals = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
     previous_signal_handlers = {}
+
     try:
-        # Installing handlers changes process state. Restore those already
-        # changed even if installing a later handler raises an exception.
+        # Restore earlier handlers even when a later installation fails.
         for signal_number in terminal_signals:
             previous_signal_handlers[signal_number] = signal.signal(signal_number, signal.SIG_IGN)
         yield
