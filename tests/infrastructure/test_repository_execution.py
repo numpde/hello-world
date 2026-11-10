@@ -50,7 +50,7 @@ class FakeExecutor:
         self.work_timeout = False
         self.cancel_start = False
         self.bad_exit_state = False
-        self.bad_confinement = False
+        self.host_configuration_overrides = {}
         self.container_mounts = []
         self.workload_output = "Ran 17 tests in 0.12s\n\nOK\n"
         self.engine_information = FAKE_ENGINE_INFORMATION.copy()
@@ -106,12 +106,13 @@ class FakeExecutor:
                 "NetworkMode": "none", "ReadonlyRootfs": True, "Privileged": False,
                 "NanoCpus": 2_000_000_000, "Memory": 536_870_912,
                 "MemorySwap": 536_870_912, "PidsLimit": 64,
-                "CapDrop": ["ALL"], "SecurityOpt": ["no-new-privileges:true"],
+                "CapDrop": ["ALL"], "CapAdd": None,
+                "SecurityOpt": ["no-new-privileges:true"],
                 "LogConfig": {"Type": "none"},
+                "Ulimits": [{"Name": "nofile", "Soft": 256, "Hard": 256}],
                 "Tmpfs": {"/tmp": "rw,nosuid,nodev,noexec,size=67108864"},
             }
-            if self.bad_confinement:
-                host_configuration["NetworkMode"] = "bridge"
+            host_configuration.update(self.host_configuration_overrides)
             return docker_client.Result(0, json.dumps({
                 "Id": FAKE_CONTAINER_ID, "Image": repository.CHECKER_IMAGE_ID,
                 "Config": {"Labels": container_labels, "User": "65532:65532"},
@@ -242,12 +243,34 @@ class RepositoryContainerContracts(unittest.TestCase):
 
     def test_engine_that_ignores_confinement_cannot_start_checker(self):
         """A created container with broader network access must be rejected before it starts."""
-        self.executor.bad_confinement = True
+        self.executor.host_configuration_overrides = {"NetworkMode": "bridge"}
         status, _, errors = self.execute()
         self.assertEqual(status, 1)
         self.assertIn("NetworkMode", errors)
         self.assertFalse(self.executor.container_present)
         self.assertFalse(any("start" in args for args, _, _ in self.executor.docker_calls))
+
+    def test_capability_additions_and_nofile_limit_must_match(self):
+        """The workload cannot start with extra capabilities or a larger file-descriptor limit."""
+        rejected_host_configuration = (
+            {"CapAdd": ["SYS_ADMIN"]},
+            {"Ulimits": None},
+            {"Ulimits": [{"Name": "nofile", "Soft": 4096, "Hard": 4096}]},
+            {"Ulimits": [{"Name": "nofile", "Soft": 256, "Hard": 4096}]},
+        )
+
+        for host_configuration_overrides in rejected_host_configuration:
+            with self.subTest(host_configuration_overrides=host_configuration_overrides):
+                self.executor.host_configuration_overrides = host_configuration_overrides
+
+                (operation_status, _, errors) = self.execute()
+
+                self.assertEqual(operation_status, 1)
+                self.assertIn("Docker did not apply required confinement", errors)
+                self.assertFalse(self.executor.container_present)
+                self.assertFalse(
+                    any("start" in arguments for (arguments, _, _) in self.executor.docker_calls)
+                )
 
     def test_public_root_file_permissions_are_checked(self):
         """Do not mount source files that the unprivileged container cannot read."""

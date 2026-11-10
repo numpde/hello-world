@@ -36,6 +36,15 @@ CLEANUP_TIMEOUT = 25
 CONTAINER_ID = re.compile(r"[0-9a-f]{64}\Z")
 UNSAFE_MOUNT_PATH = re.compile(r"[,\n\r\x00]")
 
+# These values govern both the requested Docker flags and inspection of the
+# resulting container. The two observations remain independent.
+CONTAINER_USER = "65532:65532"
+CPU_LIMIT = 2
+MEMORY_LIMIT_MIB = 512
+PID_LIMIT = 64
+NOFILE_LIMIT = 256
+TMPFS_OPTIONS = ("rw", "nosuid", "nodev", "noexec", "size=67108864")
+
 
 @dataclass(frozen=True)
 class ReadOnlyMount:
@@ -146,12 +155,13 @@ def container_arguments(job: Job, token: str, owner: str) -> list[str]:
 
         # Workloads never receive host networking or elevated privileges.
         "--network=none", "--read-only", "--cap-drop=ALL",
-        "--security-opt=no-new-privileges:true", "--user=65532:65532",
+        "--security-opt=no-new-privileges:true", f"--user={CONTAINER_USER}",
 
         # Limit each job's resource use and give it bounded temporary storage.
-        "--cpus=2", "--memory=512m", "--memory-swap=512m", "--pids-limit=64",
-        "--ulimit=nofile=256:256", "--log-driver=none",
-        "--tmpfs=/tmp:rw,nosuid,nodev,noexec,size=67108864",
+        f"--cpus={CPU_LIMIT}", f"--memory={MEMORY_LIMIT_MIB}m",
+        f"--memory-swap={MEMORY_LIMIT_MIB}m", f"--pids-limit={PID_LIMIT}",
+        f"--ulimit=nofile={NOFILE_LIMIT}:{NOFILE_LIMIT}", "--log-driver=none",
+        f"--tmpfs=/tmp:{','.join(TMPFS_OPTIONS)}",
 
         # Only validated environment and mount arguments precede the image;
         # the command arguments follow it and cannot change Docker grants.
@@ -188,14 +198,15 @@ def verify_container_posture(docker: DockerClient, identifier: str, job: Job) ->
     ):
         raise OperationError("Docker returned malformed confinement types")
 
+    expected_memory_bytes = MEMORY_LIMIT_MIB * 1024 * 1024
     expected_host_configuration = {
         "NetworkMode": "none",
         "ReadonlyRootfs": True,
         "Privileged": False,
-        "NanoCpus": 2_000_000_000,
-        "Memory": 536_870_912,
-        "MemorySwap": 536_870_912,
-        "PidsLimit": 64,
+        "NanoCpus": CPU_LIMIT * 1_000_000_000,
+        "Memory": expected_memory_bytes,
+        "MemorySwap": expected_memory_bytes,
+        "PidsLimit": PID_LIMIT,
     }
     confinement_findings = []
     for (host_field, expected_host_value) in expected_host_configuration.items():
@@ -203,10 +214,9 @@ def verify_container_posture(docker: DockerClient, identifier: str, job: Job) ->
         if observed_host_value != expected_host_value:
             confinement_findings.append(f"{host_field = }, {observed_host_value = }, {expected_host_value = }")
 
-    expected_user = "65532:65532"
     observed_user = observed_container_configuration.get("User")
-    if observed_user != expected_user:
-        confinement_findings.append(f"{observed_user = }, {expected_user = }")
+    if observed_user != CONTAINER_USER:
+        confinement_findings.append(f"{observed_user = }, {CONTAINER_USER = }")
 
     observed_dropped_capabilities = observed_host_configuration.get("CapDrop")
     if not isinstance(observed_dropped_capabilities, list) or not any(
@@ -214,6 +224,11 @@ def verify_container_posture(docker: DockerClient, identifier: str, job: Job) ->
         for capability in observed_dropped_capabilities
     ):
         confinement_findings.append(f"Missing all-capabilities flag in {observed_dropped_capabilities = }")
+
+    # CapAdd can restore a capability despite an all-capabilities drop.
+    observed_added_capabilities = observed_host_configuration.get("CapAdd")
+    if observed_added_capabilities not in (None, []):
+        confinement_findings.append(f"Unexpected {observed_added_capabilities = }")
 
     observed_security_options = observed_host_configuration.get("SecurityOpt")
     if not isinstance(observed_security_options, list) or "no-new-privileges:true" not in observed_security_options:
@@ -223,9 +238,14 @@ def verify_container_posture(docker: DockerClient, identifier: str, job: Job) ->
     if not isinstance(observed_logging_configuration, dict) or observed_logging_configuration.get("Type") != "none":
         confinement_findings.append(f"Expected disabled logging in {observed_logging_configuration = }")
 
+    observed_ulimits = observed_host_configuration.get("Ulimits")
+    expected_nofile_limit = {"Name": "nofile", "Soft": NOFILE_LIMIT, "Hard": NOFILE_LIMIT}
+    if not isinstance(observed_ulimits, list) or expected_nofile_limit not in observed_ulimits:
+        confinement_findings.append(f"Missing {expected_nofile_limit = } in {observed_ulimits = }")
+
     observed_tmpfs_configuration = observed_host_configuration.get("Tmpfs")
     observed_tmp_options = observed_tmpfs_configuration.get("/tmp") if isinstance(observed_tmpfs_configuration, dict) else None
-    expected_tmp_options = {"rw", "nosuid", "nodev", "noexec", "size=67108864"}
+    expected_tmp_options = set(TMPFS_OPTIONS)
 
     if (
         not isinstance(observed_tmp_options, str)
