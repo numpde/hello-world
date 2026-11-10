@@ -206,7 +206,7 @@ def checker_arguments(root: Path, token: str, owner: str, image_id: str) -> list
         "--ulimit=nofile=256:256", "--log-driver=none",
         "--tmpfs=/tmp:rw,nosuid,nodev,noexec,size=67108864",
         "--workdir=/workspace", "--env=HOME=/tmp", "--env=PYTHONDONTWRITEBYTECODE=1",
-        "--env=HELLO_WORLD_IN_CHECKER=1", "--platform=linux/amd64",
+        "--platform=linux/amd64",
         *public_mounts(root),
         "--entrypoint=python3", image_id,
         "-I", "-B", "/workspace/tools/repository/checks.py",

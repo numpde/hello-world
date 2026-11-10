@@ -163,7 +163,7 @@ class OperationContracts(unittest.TestCase):
             "--security-opt=no-new-privileges:true", "--user=65532:65532",
             "--pids-limit=64", "--memory=512m", "--memory-swap=512m",
             "--cpus=2", "--log-driver=none", "--platform=linux/amd64",
-            checker.IMAGE_ID, "HELLO_WORLD_IN_CHECKER=1",
+            checker.IMAGE_ID,
         ):
             self.assertTrue(any(required in value for value in create), required)
         mounts = [create[index + 1] for index, value in enumerate(create) if value == "--mount"]

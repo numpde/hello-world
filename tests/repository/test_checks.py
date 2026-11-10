@@ -1,25 +1,74 @@
-"""Test selection and failure reporting have unambiguous outcomes."""
+"""Repository test outcomes remain useful without custom unittest runners."""
 
+import contextlib
 import io
 import unittest
 
-from tools.repository.checks import FailureLastRunner
+from tools.repository import checks
 
 
 class ResultContracts(unittest.TestCase):
-    def test_errors_are_after_summary(self):
-        class ExampleFailure(unittest.TestCase):
+    def report(self, *cases):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            status = checks.run(unittest.TestSuite(cases))
+        return status, output.getvalue()
+
+    def test_success(self):
+        class Passing(unittest.TestCase):
+            def runTest(self):
+                self.assertTrue(True)
+
+        status, output = self.report(Passing())
+        self.assertEqual(status, 0)
+        self.assertIn("Ran 1 test", output)
+        self.assertEqual(output.splitlines()[-1], "OK")
+
+    def test_failures_errors_and_unexpected_successes_follow_summary(self):
+        class Failure(unittest.TestCase):
             def runTest(self):
                 self.fail("distinctive-causal-failure")
 
-        output = io.StringIO()
-        suite = unittest.TestSuite([ExampleFailure()])
-        result = FailureLastRunner(verbosity=2, stream=output).run(suite)
-        self.assertFalse(result.wasSuccessful())
-        text = output.getvalue()
-        self.assertLess(text.index("FAILED (failures=1)"), text.index("Failure details"))
-        self.assertIn("distinctive-causal-failure", text[text.index("Failure details"):])
-        self.assertTrue(text.rstrip().endswith("End of failures: 1 failed, 0 errors, 0 unexpected successes"))
+        class Error(unittest.TestCase):
+            def runTest(self):
+                raise RuntimeError("distinctive-causal-error")
+
+        class Unexpected(unittest.TestCase):
+            @unittest.expectedFailure
+            def runTest(self):
+                self.assertTrue(True)
+
+        status, output = self.report(Failure(), Error(), Unexpected())
+        self.assertEqual(status, 1)
+        summary = output.index("FAILED (failures=1, errors=1, unexpected successes=1)")
+        details = output.index("Failure details")
+        self.assertLess(summary, details)
+        self.assertIn("distinctive-causal-failure", output[details:])
+        self.assertIn("distinctive-causal-error", output[details:])
+        self.assertIn("UNEXPECTED SUCCESS:", output[details:])
+        self.assertTrue(output.rstrip().endswith("End of failures: failures=1, errors=1, unexpected_successes=1"))
+
+    def test_skipped_and_expected_failures_are_not_reported_as_failures(self):
+        class Skipped(unittest.TestCase):
+            @unittest.skip("not relevant here")
+            def runTest(self):
+                self.fail("not executed")
+
+        class Expected(unittest.TestCase):
+            @unittest.expectedFailure
+            def runTest(self):
+                self.fail("expected")
+
+        status, output = self.report(Skipped(), Expected())
+        self.assertEqual(status, 0)
+        self.assertEqual(output.splitlines()[-1], "OK")
+
+    def test_no_tests_is_an_error(self):
+        errors = io.StringIO()
+        with contextlib.redirect_stderr(errors):
+            status = checks.run(unittest.TestSuite())
+        self.assertEqual(status, 1)
+        self.assertIn("NO TESTS RAN", errors.getvalue())
 
 
 if __name__ == "__main__":
