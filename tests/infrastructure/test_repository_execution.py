@@ -278,12 +278,11 @@ class RepositoryContainerContracts(unittest.TestCase):
 
     def test_work_deadline_during_discovery_still_retires_container(self):
         """Work expiry after create cannot consume the separate cleanup budget."""
-        observed_times = iter((0.0, 0.0, finite_job.WORK_TIMEOUT + 1.0))
-        with patch.object(
-            finite_job.time,
-            "monotonic",
-            side_effect=lambda: next(observed_times, finite_job.WORK_TIMEOUT + 1.0),
-        ):
+        def observed_work_time() -> float:
+            create_was_sent = any("create" in argv for (argv, _, _) in self.executor.docker_calls)
+            return finite_job.WORK_TIMEOUT + 1.0 if create_was_sent else 0.0
+
+        with patch.object(finite_job.time, "monotonic", side_effect=observed_work_time):
             (operation_status, _, errors) = self.execute()
 
         self.assertEqual(operation_status, 1)
