@@ -12,8 +12,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from tools.container import runner as core
-from tools.repository import operation as checker
+from tools.container import finite_job
+from tools.repository import checker
 
 
 IDENTIFIER = "a" * 64
@@ -49,13 +49,13 @@ class FakeExecutor:
         self.calls.append((tuple(argv), env.copy(), timeout))
         args = argv[1:] if argv[:2] == ["docker", "context"] else argv[5:]
         if argv[:3] == ["docker", "context", "inspect"]:
-            return core.Result(0, self.endpoint + "\n")
+            return finite_job.Result(0, self.endpoint + "\n")
         if args[:2] == ["info", "--format"]:
-            return core.Result(0, json.dumps(self.engine) + "\n")
+            return finite_job.Result(0, json.dumps(self.engine) + "\n")
         if args[:2] == ["image", "inspect"]:
-            return core.Result(0, checker.IMAGE_ID + "\n") if self.image_present else core.Result(1, "No such image")
+            return finite_job.Result(0, checker.IMAGE_ID + "\n") if self.image_present else finite_job.Result(1, "No such image")
         if args[:1] == ["pull"]:
-            return core.Result(0, "Downloaded pinned digest\n")
+            return finite_job.Result(0, "Downloaded pinned digest\n")
         if args[:1] == ["create"]:
             if self.creation_timeout:
                 raise TimeoutError("create timed out")
@@ -74,18 +74,18 @@ class FakeExecutor:
                 }
                 for part in args if part.startswith("type=bind,")
             ]
-            return core.Result(0, IDENTIFIER + "\n")
+            return finite_job.Result(0, IDENTIFIER + "\n")
         if args[:1] == ["ps"]:
-            return core.Result(0, IDENTIFIER + "\n" if self.present else "")
+            return finite_job.Result(0, IDENTIFIER + "\n" if self.present else "")
         if args[:3] == ["container", "inspect", "--format"]:
             if args[3] == "{{json .State}}":
                 state = {"Running": False, "ExitCode": self.exit_status}
                 if self.bad_exit_state:
                     state = {"Running": True, "ExitCode": 0}
-                return core.Result(0, json.dumps(state) + "\n")
+                return finite_job.Result(0, json.dumps(state) + "\n")
             labels = self.labels.copy()
             if self.malformed_ownership:
-                labels[core.IDENTITY_LABEL] = "not-our-operation"
+                labels[finite_job.IDENTITY_LABEL] = "not-our-operation"
             host = {
                 "NetworkMode": "none", "ReadonlyRootfs": True, "Privileged": False,
                 "NanoCpus": 2_000_000_000, "Memory": 536_870_912,
@@ -96,28 +96,28 @@ class FakeExecutor:
             }
             if self.bad_confinement:
                 host["NetworkMode"] = "bridge"
-            return core.Result(0, json.dumps({
+            return finite_job.Result(0, json.dumps({
                 "Id": IDENTIFIER, "Image": checker.IMAGE_ID,
                 "Config": {"Labels": labels, "User": "65532:65532"},
                 "HostConfig": host, "Mounts": self.mounts,
             }))
         if args[:1] == ["start"]:
             if self.cancel_start:
-                raise core.Cancelled("caller interrupted work")
+                raise finite_job.Cancelled("caller interrupted work")
             if self.work_timeout:
                 raise TimeoutError("attachment timed out")
             if self.failed_start:
-                return core.Result(1, "Docker client failed to attach")
-            return core.Result(0, self.source_output)
+                return finite_job.Result(1, "Docker client failed to attach")
+            return finite_job.Result(0, self.source_output)
         if args[:1] == ["rm"]:
             if self.failed_removal:
-                return core.Result(1, "rm rejected")
+                return finite_job.Result(1, "rm rejected")
             self.present = False
-            return core.Result(0, IDENTIFIER + "\n")
+            return finite_job.Result(0, IDENTIFIER + "\n")
         raise AssertionError(f"Unexpected Docker call: {argv}")
 
 
-class OperationContracts(unittest.TestCase):
+class RepositoryContainerContracts(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory(prefix="checker-fixture-")
         self.addCleanup(self.directory.cleanup)
@@ -136,10 +136,10 @@ class OperationContracts(unittest.TestCase):
             "HTTP_PROXY": "http://untrusted", "HTTPS_PROXY": "http://untrusted",
             "PYTHONPATH": "/untrusted", "AWS_SECRET_ACCESS_KEY": "nope",
         }
-        self.uid_patch = patch.object(core.os, "geteuid", return_value=1000)
+        self.uid_patch = patch.object(finite_job.os, "geteuid", return_value=1000)
         self.uid_patch.start()
         self.addCleanup(self.uid_patch.stop)
-        self.gid_patch = patch.object(core.os, "getegid", return_value=1000)
+        self.gid_patch = patch.object(finite_job.os, "getegid", return_value=1000)
         self.gid_patch.start()
         self.addCleanup(self.gid_patch.stop)
         self.socket_patch = patch.object(checker, "verify_socket")
@@ -149,7 +149,7 @@ class OperationContracts(unittest.TestCase):
     def execute(self, action="check"):
         output, errors = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
-            status = checker.operate(action, self.environment, self.executor, self.root)
+            status = checker.run_repository_command(action, self.environment, self.executor, self.root)
         return status, output.getvalue(), errors.getvalue()
 
     def test_success_contained_and_cleanup_verified(self):
@@ -215,7 +215,7 @@ class OperationContracts(unittest.TestCase):
         source = self.root / "Makefile"
         source.chmod(0o600)
         self.addCleanup(lambda: source.chmod(0o644))
-        with self.assertRaisesRegex(core.OperationError, "non-public"):
+        with self.assertRaisesRegex(finite_job.OperationError, "non-public"):
             self.execute()
         self.assertFalse(self.executor.present)
 
@@ -263,23 +263,23 @@ class OperationContracts(unittest.TestCase):
         self.addCleanup(lambda: __import__("shutil").rmtree(path.parent))
 
     def test_parallel_test_command_is_an_adapter_choice(self):
-        replacement = core.Command(
+        replacement = finite_job.Command(
             executable="unittest-parallel",
-            arguments=(*checker.DISCOVERY, "--level=module", "-j", "2"),
+            arguments=(*checker.UNITTEST_DISCOVERY_ARGS, "--level=module", "-j", "2"),
         )
-        job = checker.checker_job(self.root, checker.IMAGE_ID, replacement)
-        create = core.container_arguments(job, "test-token", "test-owner")
+        job = checker.repository_test_job(self.root, checker.IMAGE_ID, replacement)
+        create = finite_job.container_arguments(job, "test-token", "test-owner")
         self.assertIn("--entrypoint=unittest-parallel", create)
         self.assertEqual(tuple(create[-len(replacement.arguments):]), replacement.arguments)
-        self.assertNotIn("/workspace/tools/repository/checks.py", create)
+        self.assertNotIn("/workspace/tools/repository/unittest_runner.py", create)
 
     def test_generic_job_does_not_depend_on_repository_checks(self):
-        job = core.Job(
+        job = finite_job.Job(
             image_id=checker.IMAGE_ID,
-            command=core.Command("/bin/echo", ("hello",)),
+            command=finite_job.Command("/bin/echo", ("hello",)),
             mounts=(),
         )
-        create = core.container_arguments(job, "test-token", "test-owner")
+        create = finite_job.container_arguments(job, "test-token", "test-owner")
         self.assertEqual(create[-2:], [checker.IMAGE_ID, "hello"])
         self.assertIn("--entrypoint=/bin/echo", create)
 
@@ -293,7 +293,7 @@ class OperationContracts(unittest.TestCase):
 
     def test_missing_pinned_image_has_explicit_remedy(self):
         self.executor.image_present = False
-        with self.assertRaisesRegex(core.OperationError, "repository/image/acquire"):
+        with self.assertRaisesRegex(finite_job.OperationError, "repository/image/acquire"):
             self.execute()
         self.assertFalse(self.executor.present)
 
@@ -301,7 +301,7 @@ class OperationContracts(unittest.TestCase):
         for changed in ({"SecurityOptions": []}, {"CgroupVersion": "1"}, {"Architecture": "arm64"}):
             with self.subTest(changed=changed):
                 self.executor.engine = ENGINE | changed
-                with self.assertRaises(core.OperationError):
+                with self.assertRaises(finite_job.OperationError):
                     self.execute()
                 self.assertFalse(self.executor.present)
 
@@ -309,23 +309,23 @@ class OperationContracts(unittest.TestCase):
         for input_name in (None, "", "../../engine", "bad context", "$(shell touch /tmp/nope)"):
             with self.subTest(input_name=input_name):
                 self.environment["HELLO_WORLD_DOCKER_CONTEXT"] = input_name
-                with self.assertRaises(core.OperationError):
+                with self.assertRaises(finite_job.OperationError):
                     self.execute()
         self.assertFalse(self.executor.calls)
 
     def test_remote_endpoint_rejected(self):
         self.executor.endpoint = "tcp://not-allowed:2376"
-        with self.assertRaisesRegex(core.OperationError, "local Unix socket"):
+        with self.assertRaisesRegex(finite_job.OperationError, "local Unix socket"):
             self.execute()
 
     def test_source_symlink_and_unknown_root_rejected_before_create(self):
         extra = self.root / "config.env"
         extra.write_text("SECRET=hello")
-        with self.assertRaisesRegex(core.OperationError, "Unclassified"):
+        with self.assertRaisesRegex(finite_job.OperationError, "Unclassified"):
             self.execute()
         extra.unlink()
         (self.root / "tools" / "link").symlink_to("/etc/passwd")
-        with self.assertRaisesRegex(core.OperationError, "Refusing link"):
+        with self.assertRaisesRegex(finite_job.OperationError, "Refusing link"):
             self.execute()
         self.assertFalse(self.executor.present)
 
@@ -339,46 +339,46 @@ class OperationContracts(unittest.TestCase):
         self.assertFalse(any("secrets" in str(value.source) or "/.git" in str(value.source) for value in mounts))
 
     def test_full_ids_only_and_no_collision(self):
-        with self.assertRaisesRegex(core.OperationError, "malformed"):
-            core.container_ids("abc\n")
-        with self.assertRaisesRegex(core.OperationError, "duplicate"):
-            core.container_ids(IDENTIFIER + "\n" + IDENTIFIER + "\n")
+        with self.assertRaisesRegex(finite_job.OperationError, "malformed"):
+            finite_job.container_ids("abc\n")
+        with self.assertRaisesRegex(finite_job.OperationError, "duplicate"):
+            finite_job.container_ids(IDENTIFIER + "\n" + IDENTIFIER + "\n")
 
 
 class NativeClientContracts(unittest.TestCase):
     def test_capture_is_bounded_even_for_large_output(self):
-        client = core.NativeExecutor()
+        client = finite_job.NativeExecutor()
         command = [sys.executable, "-I", "-c", "import sys;sys.stdout.write('x'*1500000)"]
-        result = client.run(command, core.clean_environment(os.environ.copy()), timeout=10)
+        result = client.run(command, finite_job.clean_environment(os.environ.copy()), timeout=10)
         self.assertEqual(result.status, 0)
         self.assertTrue(result.truncated)
-        self.assertEqual(len(result.output), core.MAX_OUTPUT)
+        self.assertEqual(len(result.output), finite_job.MAX_OUTPUT)
 
     def test_native_timeout_does_not_leave_its_client(self):
-        client = core.NativeExecutor()
+        client = finite_job.NativeExecutor()
         command = [sys.executable, "-I", "-c", "import time;time.sleep(30)"]
         with self.assertRaises(TimeoutError):
-            client.run(command, core.clean_environment(os.environ.copy()), timeout=1)
+            client.run(command, finite_job.clean_environment(os.environ.copy()), timeout=1)
 
 
 class InputContracts(unittest.TestCase):
     def test_socket_addresses(self):
-        self.assertEqual(str(core.socket_path("unix:///run/user/1000/docker.sock")),
+        self.assertEqual(str(finite_job.socket_path("unix:///run/user/1000/docker.sock")),
                          "/run/user/1000/docker.sock")
         for endpoint in ("tcp://elsewhere", "unix://relative", "unix:///a\nb", "ssh://hostname", "unix:///a?b"):
-            with self.subTest(endpoint=endpoint), self.assertRaises(core.OperationError):
-                core.socket_path(endpoint)
+            with self.subTest(endpoint=endpoint), self.assertRaises(finite_job.OperationError):
+                finite_job.socket_path(endpoint)
 
     def test_owned_rootless_socket_requires_actual_socket(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "not-a-socket"
             path.write_text("fake")
-            with self.assertRaisesRegex(core.OperationError, "user-owned"):
-                core.verify_socket("unix://" + str(path))
+            with self.assertRaisesRegex(finite_job.OperationError, "user-owned"):
+                finite_job.verify_socket("unix://" + str(path))
 
     def test_checked_result_does_not_relabel_errors(self):
-        with self.assertRaisesRegex(core.OperationError, "exit 33"):
-            core.checked_result(core.Result(33, "trace was retained"), "context")
+        with self.assertRaisesRegex(finite_job.OperationError, "exit 33"):
+            finite_job.checked_result(finite_job.Result(33, "trace was retained"), "context")
 
 
 if __name__ == "__main__":

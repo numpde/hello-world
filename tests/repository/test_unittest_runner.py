@@ -4,14 +4,14 @@ import contextlib
 import io
 import unittest
 
-from tools.repository import checks
+from tools.repository import unittest_runner
 
 
 class ResultContracts(unittest.TestCase):
     def report(self, *cases):
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
-            status = checks.run(unittest.TestSuite(cases))
+            status = unittest_runner.run(unittest.TestSuite(cases))
         return status, output.getvalue()
 
     def test_success(self):
@@ -66,7 +66,7 @@ class ResultContracts(unittest.TestCase):
     def test_no_tests_is_an_error(self):
         errors = io.StringIO()
         with contextlib.redirect_stderr(errors):
-            status = checks.run(unittest.TestSuite())
+            status = unittest_runner.run(unittest.TestSuite())
         self.assertEqual(status, 1)
         self.assertIn("NO TESTS RAN", errors.getvalue())
 

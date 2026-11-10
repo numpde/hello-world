@@ -1,4 +1,4 @@
-"""Run repository tests and report their failures after the summary."""
+"""Unittest-specific repository entry point; emit full failures after the summary."""
 
 import argparse
 import os

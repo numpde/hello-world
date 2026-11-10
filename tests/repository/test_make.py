@@ -22,7 +22,7 @@ class MakeContracts(unittest.TestCase):
         makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
         recipe = re.search(r"^repository/check:.*\n(\t.*\n)+", makefile, re.MULTILINE)
         self.assertIsNotNone(recipe)
-        self.assertIn("tools.repository.operation check", recipe.group())
+        self.assertIn("tools.repository.checker check", recipe.group())
         self.assertNotIn("unittest", recipe.group())
         self.assertNotIn("docker run", recipe.group())
 

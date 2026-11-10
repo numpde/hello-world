@@ -1,4 +1,4 @@
-"""Run repository checks through the shared finite-job container runner."""
+"""Run repository checks through the shared finite-job container finite_job."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import stat
 import sys
 from pathlib import Path
 
-from tools.container import runner
+from tools.container import finite_job
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -22,24 +22,24 @@ PRIVATE_ROOTS = frozenset({".git", ".agents", ".codex", ".aws", ".venv", ".pytes
 
 # Discovery args are shared with unittest-parallel's CLI. Changing runners
 # changes Command and the pinned checker image, not the Docker lifecycle.
-DISCOVERY = ("-s", "tests/repository", "-t", ".", "-p", "test_*.py")
-TEST_COMMAND = runner.Command(
+UNITTEST_DISCOVERY_ARGS = ("-s", "tests/repository", "-t", ".", "-p", "test_*.py")
+UNITTEST_COMMAND = finite_job.Command(
     executable="python3",
-    arguments=("-I", "-B", "/workspace/tools/repository/checks.py", *DISCOVERY),
+    arguments=("-I", "-B", "/workspace/tools/repository/unittest_runner.py", *UNITTEST_DISCOVERY_ARGS),
 )
 
 
-def public_mounts(root: Path) -> tuple[runner.ReadOnlyMount, ...]:
+def public_mounts(root: Path) -> tuple[finite_job.ReadOnlyMount, ...]:
     """Grant only classified public project inputs to repository tests."""
     if any(ch in str(root) for ch in (",", "\n", "\r", "\x00")):
-        raise runner.OperationError("Repository path cannot be represented safely in Docker mounts")
+        raise finite_job.OperationError("Repository path cannot be represented safely in Docker mounts")
     discovered = {entry.name: entry for entry in root.iterdir()}
     unknown = sorted(discovered.keys() - PUBLIC_ROOTS - PRIVATE_ROOTS)
     if unknown:
-        raise runner.OperationError(f"Unclassified repository roots: {', '.join(unknown)}")
+        raise finite_job.OperationError(f"Unclassified repository roots: {', '.join(unknown)}")
     for required in ("Makefile", "tools", "tests"):
         if required not in discovered:
-            raise runner.OperationError(f"Required repository input missing: {required}")
+            raise finite_job.OperationError(f"Required repository input missing: {required}")
 
     mounts = []
     for name in sorted(PUBLIC_ROOTS & discovered.keys()):
@@ -48,24 +48,24 @@ def public_mounts(root: Path) -> tuple[runner.ReadOnlyMount, ...]:
             for child in [Path(directory), *(Path(directory) / part for part in directories + files)]:
                 mode = child.lstat().st_mode
                 if not (stat.S_ISREG(mode) or stat.S_ISDIR(mode)):
-                    raise runner.OperationError(f"Refusing link or non-file source: {child}")
+                    raise finite_job.OperationError(f"Refusing link or non-file source: {child}")
                 if (stat.S_ISDIR(mode) and mode & 0o005 != 0o005) or (
                     stat.S_ISREG(mode) and mode & 0o004 != 0o004
                 ):
-                    raise runner.OperationError(f"Checker cannot read non-public source: {child}")
+                    raise finite_job.OperationError(f"Checker cannot read non-public source: {child}")
         mode = entry.lstat().st_mode
         if not (stat.S_ISREG(mode) or stat.S_ISDIR(mode)):
-            raise runner.OperationError(f"Refusing link or non-file source: {entry}")
+            raise finite_job.OperationError(f"Refusing link or non-file source: {entry}")
         if (stat.S_ISDIR(mode) and mode & 0o005 != 0o005) or (
             stat.S_ISREG(mode) and mode & 0o004 != 0o004
         ):
-            raise runner.OperationError(f"Checker cannot read non-public source: {entry}")
-        mounts.append(runner.ReadOnlyMount(entry, f"/workspace/{name}"))
+            raise finite_job.OperationError(f"Checker cannot read non-public source: {entry}")
+        mounts.append(finite_job.ReadOnlyMount(entry, f"/workspace/{name}"))
     return tuple(mounts)
 
 
-def checker_job(root: Path, image_id: str, command: runner.Command = TEST_COMMAND) -> runner.Job:
-    return runner.Job(
+def repository_test_job(root: Path, image_id: str, command: finite_job.Command = UNITTEST_COMMAND) -> finite_job.Job:
+    return finite_job.Job(
         image_id=image_id,
         command=command,
         mounts=public_mounts(root),
@@ -73,16 +73,16 @@ def checker_job(root: Path, image_id: str, command: runner.Command = TEST_COMMAN
     )
 
 
-def operate(
+def run_repository_command(
     action: str,
     environ: dict[str, str],
-    executor: runner.Executor | None = None,
+    executor: finite_job.Executor | None = None,
     root: Path = ROOT,
 ) -> int:
     if action not in {"check", "acquire"}:
-        raise runner.OperationError(f"Unknown repository operation: {action}")
-    context_name = runner.required_context(environ)
-    with runner.docker_client(environ, executor) as docker:
+        raise finite_job.OperationError(f"Unknown repository operation: {action}")
+    context_name = finite_job.required_context(environ)
+    with finite_job.docker_client(environ, executor) as docker:
         if action == "acquire":
             docker.acquire(IMAGE, IMAGE_ID)
             print(f"Acquired checker image {IMAGE_ID} on Docker context {context_name}.")
@@ -92,7 +92,7 @@ def operate(
             expected_id=IMAGE_ID,
             acquire_hint="Run: make repository/image/acquire DOCKER_CONTEXT=<context>",
         )
-        outcome = runner.run_container(docker, context_name, checker_job(root, image_id))
+        outcome = finite_job.run_container(docker, context_name, repository_test_job(root, image_id))
 
     if outcome.output:
         print(outcome.output, end="" if outcome.output.endswith("\n") else "\n")
@@ -109,17 +109,17 @@ def operate(
 def main(argv: list[str] | None = None) -> int:
     actions = sys.argv[1:] if argv is None else argv
     if len(actions) != 1:
-        print("Usage: python3 -m tools.repository.operation check|acquire", file=sys.stderr)
+        print("Usage: python3 -m tools.repository.checker check|acquire", file=sys.stderr)
         return 2
 
     def cancel(signum: int, _frame: object) -> None:
-        raise runner.Cancelled(f"Caller requested cancellation ({signal.Signals(signum).name})")
+        raise finite_job.Cancelled(f"Caller requested cancellation ({signal.Signals(signum).name})")
 
     signals = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
     previous = {number: signal.signal(number, cancel) for number in signals}
     try:
-        return operate(actions[0], dict(os.environ))
-    except (runner.OperationError, OSError, TimeoutError, KeyboardInterrupt) as error:
+        return run_repository_command(actions[0], dict(os.environ))
+    except (finite_job.OperationError, OSError, TimeoutError, KeyboardInterrupt) as error:
         print(f"REPOSITORY OPERATION FAILURE: {error}", file=sys.stderr)
         return 2
     finally:
