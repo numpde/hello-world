@@ -610,8 +610,10 @@ class RepositoryContainerContracts(unittest.TestCase):
         """Unclassified files or symlinks must fail before any container obtains source access."""
         extra = self.root / "config.env"
         extra.write_text("SECRET=hello")
-        with self.assertRaisesRegex(docker_client.OperationError, "Unclassified"):
+        with self.assertRaises(docker_client.OperationError) as unclassified:
             self.execute()
+        self.assertIn("Unclassified", str(unclassified.exception))
+        self.assertIn("Next:", str(unclassified.exception))
         extra.unlink()
         (self.root / "infrastructure" / "link").symlink_to("/etc/passwd")
         with self.assertRaisesRegex(docker_client.OperationError, "Refusing link"):
@@ -619,14 +621,42 @@ class RepositoryContainerContracts(unittest.TestCase):
         self.assertFalse(self.executor.container_present)
 
     def test_private_roots_are_never_mounted(self):
-        """Git metadata and secrets remain invisible even when they exist beside public files."""
-        (self.root / ".git").mkdir()
-        (self.root / ".git" / "config").write_text("private")
-        (self.root / "secrets").mkdir()
-        (self.root / "secrets" / "key").write_text("private")
+        """Git metadata, secrets, and local editor files remain outside the checker."""
+        for private_root in (".git", "secrets", ".idea", ".vscode"):
+            private_directory = self.root / private_root
+            private_directory.mkdir()
+            (private_directory / "local-settings").write_text("private")
+
         mounts = repository.public_mounts(self.root)
+
         self.assertEqual(len(mounts), 3)
-        self.assertFalse(any("secrets" in str(value.source) or "/.git" in str(value.source) for value in mounts))
+        mounted_sources = {mount.source.name for mount in mounts}
+        self.assertFalse(mounted_sources & {".git", "secrets", ".idea", ".vscode"})
+
+    def test_local_editor_metadata_does_not_block_repository_checks(self):
+        """A local IDE's private directory must neither block checks nor be mounted."""
+        for editor_directory in (".idea", ".vscode"):
+            private_directory = self.root / editor_directory
+            private_directory.mkdir(mode=0o700)
+            (private_directory / "settings.xml").write_text("private")
+            (private_directory / "settings.xml").chmod(0o600)
+
+        (operation_status, output, errors) = self.execute()
+
+        self.assertEqual(operation_status, 0, errors)
+        self.assertIn("17 tests", output)
+        create_arguments = next(
+            argv for (argv, _, _) in self.executor.docker_calls if "create" in argv
+        )
+        mounted_arguments = [
+            create_arguments[index + 1]
+            for (index, value) in enumerate(create_arguments)
+            if value == "--mount"
+        ]
+        self.assertFalse(
+            any(".idea" in mount or ".vscode" in mount for mount in mounted_arguments)
+        )
+        self.assertFalse(self.executor.container_present)
 
     def test_mount_paths_are_admitted_independently(self):
         """Source and destination paths must each satisfy Docker's mount grammar."""

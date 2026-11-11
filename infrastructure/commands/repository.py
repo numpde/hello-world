@@ -24,7 +24,8 @@ CHECKER_IMAGE_REFERENCE = (
 )
 CHECKER_IMAGE_ID = "sha256:37ccb536022bb36c4570856b55ebfa85bf07827e3c2fa3eba37f0dac62eebc05"
 PUBLIC_ROOTS = frozenset({"Makefile", "notes", "infrastructure", "tests", ".github", ".gitignore", "README.md", "pyproject.toml"})
-PRIVATE_ROOTS = frozenset({".git", ".agents", ".codex", ".aws", ".venv", ".pytest_cache", "__pycache__", ".env", "secrets", "build", "dist"})
+# Local editor metadata is not source material and must not enter the checker.
+PRIVATE_ROOTS = frozenset({".git", ".agents", ".codex", ".idea", ".vscode", ".aws", ".venv", ".pytest_cache", "__pycache__", ".env", "secrets", "build", "dist"})
 
 # Discovery args are shared with unittest-parallel's CLI. Changing runners
 # changes Command and the pinned checker image, not the Docker lifecycle.
@@ -46,7 +47,11 @@ secrets are never mounted."""
     root_entries = {source_entry.name: source_entry for source_entry in root.iterdir()}
     unclassified_roots = sorted(root_entries.keys() - PUBLIC_ROOTS - PRIVATE_ROOTS)
     if unclassified_roots:
-        raise docker_client.OperationError(f"Unclassified {unclassified_roots = }")
+        raise docker_client.OperationError(
+            f"Unclassified {unclassified_roots = }. "
+            "Next: move unrelated entries outside the checkout, or explicitly classify them "
+            "in PUBLIC_ROOTS/PRIVATE_ROOTS. Do not mount unreviewed files."
+        )
 
     for required_root in ("Makefile", "infrastructure", "tests"):
         if required_root not in root_entries:
