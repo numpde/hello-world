@@ -111,13 +111,17 @@ def run_repository_command(
 
     with docker_client.docker_client(environ, executor) as selected_engine_client:
         if action == "acquire":
-            selected_engine_client.acquire(CHECKER_IMAGE_REFERENCE, CHECKER_IMAGE_ID)
-            print(f"Acquired checker image {CHECKER_IMAGE_ID} on Docker context {selected_context_name}.")
+            observed_image_id = selected_engine_client.acquire(CHECKER_IMAGE_REFERENCE, CHECKER_IMAGE_ID)
+            print(f"Acquired checker image on Docker context {selected_context_name} ({observed_image_id = }).")
+            print(f"Next: make repository/check DOCKER_CONTEXT={selected_context_name}")
             return 0
         verified_image_id = selected_engine_client.image(
             reference=CHECKER_IMAGE_REFERENCE,
             expected_id=CHECKER_IMAGE_ID,
-            acquire_hint="Run: make repository/image/acquire DOCKER_CONTEXT=<context>",
+            acquire_hint=(
+                f"make repository/image/acquire DOCKER_CONTEXT={selected_context_name} && "
+                f"make repository/check DOCKER_CONTEXT={selected_context_name}"
+            ),
         )
         job_outcome = finite_job.run_container(
             selected_engine_client,
@@ -132,6 +136,14 @@ def run_repository_command(
 
     for operation_diagnostic in job_outcome.diagnostics:
         print(operation_diagnostic, file=sys.stderr)
+
+    if job_outcome.recovery is not None:
+        print(f"Next: inspect {job_outcome.recovery / 'recovery.txt'} before retrying.", file=sys.stderr)
+    elif job_outcome.status != 0:
+        print(
+            f"Next: resolve the failure above, then make repository/check DOCKER_CONTEXT={selected_context_name}",
+            file=sys.stderr,
+        )
 
     return job_outcome.status
 

@@ -256,17 +256,34 @@ class DockerClient:
         return engine_identity
 
     def image(self, reference: str, expected_id: str, acquire_hint: str) -> str:
-        """Check that the pinned image exists locally with the expected config ID.
-        
-        No download is attempted. Missing or mismatched images stop execution;
-        a missing image includes the caller's explicit acquisition command."""
+        """Admit a digest-pinned image under both supported Docker image stores.
+
+        The classic store reports the configuration digest as its image ID;
+        containerd can report the pinned OCI manifest/index digest instead.
+        Return the observed identity for container creation and ownership checks.
+        """
+        (image_name, separator, pinned_image_digest) = reference.rpartition("@")
+        if not image_name or not separator or not re.fullmatch(r"sha256:[0-9a-f]{64}", pinned_image_digest):
+            raise OperationError(f"Expected digest-pinned {reference = }")
+
         image_inspection_result = self.call("image", "inspect", "--format", "{{.Id}}", reference)
         if image_inspection_result.status != 0:
-            raise OperationError(f"Pinned image is missing on the selected engine. {acquire_hint}")
-        actual_image_id = checked_result(image_inspection_result, "Pinned image inspection")
-        if actual_image_id != expected_id:
-            raise OperationError(f"Pinned image configuration differs: {actual_image_id!r}")
-        return actual_image_id
+            inspection_error = image_inspection_result.output.strip()[-1200:]
+            raise OperationError(
+                f"Pinned image inspection failed: {image_inspection_result.status = }; "
+                f"{inspection_error}\n"
+                f"If the image is absent, next: {acquire_hint}"
+            )
+
+        observed_image_id = checked_result(image_inspection_result, "Pinned image inspection")
+        if observed_image_id not in (expected_id, pinned_image_digest):
+            raise OperationError(
+                f"Unrecognized pinned image identity: {observed_image_id = }, "
+                f"{expected_id = }, {pinned_image_digest = }. "
+                "Inspect the selected engine's image store and the reviewed pins."
+            )
+
+        return observed_image_id
 
     def acquire(self, reference: str, expected_id: str) -> str:
         """Pull the specified linux/amd64 image and verify its local config ID.
@@ -277,7 +294,11 @@ class DockerClient:
             self.call("pull", "--platform=linux/amd64", reference, timeout=ACQUISITION_TIMEOUT),
             "Pinned image acquisition",
         )
-        return self.image(reference, expected_id, "Acquired image could not be verified")
+        return self.image(
+            reference,
+            expected_id,
+            "Inspect the selected Docker image store and the reviewed pins before retrying.",
+        )
 
 
 @contextmanager
