@@ -23,7 +23,7 @@ class MakeContracts(unittest.TestCase):
         self.assertNotIn("$(shell", makefile_text)
         self.assertIn("$(value DOCKER_CONTEXT)", makefile_text)
         # AWK field references must survive Make's dollar expansion.
-        self.assertIn('$1, $2', makefile_text)
+        self.assertIn('$$1, $$2', makefile_text)
 
     def test_repository_checks_have_only_one_container_entry_point(self):
         """Keep Make as a dispatcher so tests cannot accidentally acquire a host fallback."""
