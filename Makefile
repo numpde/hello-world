@@ -10,10 +10,14 @@ endif
 
 .PHONY: help repository/check repository/image/acquire
 
-help: ## Show maintained commands; no Docker, network, prompts, or writes.
+help: ## Show commands, effects and next steps without touching Docker.
 	@printf '%s\n' 'Hello World — common infrastructure' '' \
-	  'Docker operations require DOCKER_CONTEXT=<local rootless context>.' ''
-	@awk -F ':[^#]*## ' '/^[a-z][a-z0-9/-]*:.*## / { printf "  %-28s %s\n", $$1, $$2 }' Makefile
+	  'Docker operations require DOCKER_CONTEXT=<local rootless context>.' \
+	  'Example (replace example-rootless with your existing context):' \
+	  '  make repository/image/acquire DOCKER_CONTEXT=example-rootless' \
+	  '  make repository/check DOCKER_CONTEXT=example-rootless' \
+	  'Acquisition can download images; repository/check stays offline.' ''
+	@awk -F ':[^#]*## ' '/^[a-z][a-z0-9/-]*:.*## / { printf "  %-28s %s\n", $1, $2 }' Makefile
 
 repository/check: ## Run repository checks offline in a confined Docker container.
 	@python3 -m infrastructure.commands.repository check

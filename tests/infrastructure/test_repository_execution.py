@@ -60,6 +60,8 @@ class FakeExecutor:
         self.engine_information = FAKE_ENGINE_INFORMATION.copy()
         self.engine_endpoint = FAKE_ENGINE_ENDPOINT
         self.checker_image_present = True
+        self.reported_image_id = repository.CHECKER_IMAGE_ID
+        self.image_inspection_error = "No such image"
 
     def run(self, argv, env, timeout):
         """Return deterministic replies for the Docker commands used by the adapter.
@@ -73,7 +75,9 @@ class FakeExecutor:
         if docker_arguments[:2] == ["info", "--format"]:
             return docker_client.Result(0, json.dumps(self.engine_information) + "\n")
         if docker_arguments[:2] == ["image", "inspect"]:
-            return docker_client.Result(0, repository.CHECKER_IMAGE_ID + "\n") if self.checker_image_present else docker_client.Result(1, "No such image")
+            if self.checker_image_present:
+                return docker_client.Result(0, self.reported_image_id + "\n")
+            return docker_client.Result(1, self.image_inspection_error)
         if docker_arguments[:1] == ["pull"]:
             return docker_client.Result(0, "Downloaded pinned digest\n")
         if docker_arguments[:1] == ["create"]:
@@ -118,7 +122,7 @@ class FakeExecutor:
             }
             host_configuration.update(self.host_configuration_overrides)
             return docker_client.Result(0, json.dumps({
-                "Id": FAKE_CONTAINER_ID, "Image": repository.CHECKER_IMAGE_ID,
+                "Id": FAKE_CONTAINER_ID, "Image": self.reported_image_id,
                 "Config": {"Labels": container_labels, "User": "65532:65532"},
                 "HostConfig": host_configuration,
                 "Mounts": [*self.container_mounts, *self.observed_additional_mounts],
@@ -229,6 +233,7 @@ class RepositoryContainerContracts(unittest.TestCase):
         status, output, errors = self.execute()
         self.assertEqual(status, 1)
         self.assertIn("FAIL: test_example", output)
+        self.assertIn("Next: resolve the failure above, then make repository/check DOCKER_CONTEXT=rootless", errors)
         self.assertRegex(errors, r"Container exited.*1")
         self.assertFalse(self.executor.container_present)
 
@@ -470,6 +475,7 @@ class RepositoryContainerContracts(unittest.TestCase):
         self.assertEqual(status, 1)
         self.assertTrue(self.executor.container_present)
         self.assertIn("CLEANUP UNCONFIRMED", errors)
+        self.assertIn("Next: inspect ", errors)
         path = Path(errors.split("Retained recovery record: ", 1)[1].splitlines()[0])
         self.assertTrue(path.is_file())
         self.addCleanup(shutil.rmtree, path.parent)
@@ -512,15 +518,68 @@ class RepositoryContainerContracts(unittest.TestCase):
         status, output, errors = self.execute("acquire")
         self.assertEqual(status, 0, errors)
         self.assertIn("Acquired checker image", output)
+        self.assertIn("Next: make repository/check DOCKER_CONTEXT=rootless", output)
         calls = [argv for argv, _, _ in self.executor.docker_calls]
         self.assertEqual(sum("pull" in argv for argv in calls), 1)
         self.assertFalse(any("create" in argv for argv in calls))
 
+    def test_checker_image_accepts_both_reviewed_image_identities(self):
+        """The classic and containerd image stores can report different pinned IDs."""
+        pinned_manifest_digest = repository.CHECKER_IMAGE_REFERENCE.rsplit("@", 1)[1]
+
+        for reported_image_id in (repository.CHECKER_IMAGE_ID, pinned_manifest_digest):
+            with self.subTest(reported_image_id=reported_image_id):
+                self.executor.reported_image_id = reported_image_id
+                self.executor.docker_calls.clear()
+
+                (operation_status, output, errors) = self.execute()
+
+                self.assertEqual(operation_status, 0, errors)
+                self.assertIn("17 tests", output)
+                self.assertFalse(self.executor.container_present)
+                self.assertTrue(any("create" in argv for (argv, _, _) in self.executor.docker_calls))
+
+    def test_unrelated_image_id_is_rejected_before_create(self):
+        """A digest unrelated to either reviewed pin never reaches Docker create."""
+        self.executor.reported_image_id = "sha256:" + "f" * 64
+
+        with self.assertRaisesRegex(docker_client.OperationError, "Unrecognized pinned image identity"):
+            self.execute()
+
+        self.assertFalse(any("create" in argv for (argv, _, _) in self.executor.docker_calls))
+
+    def test_manifest_identity_is_admitted_after_acquisition(self):
+        """Networked acquisition recommends running the offline check on the same engine."""
+        self.executor.reported_image_id = repository.CHECKER_IMAGE_REFERENCE.rsplit("@", 1)[1]
+
+        (operation_status, output, errors) = self.execute("acquire")
+
+        self.assertEqual(operation_status, 0, errors)
+        self.assertIn("Next: make repository/check DOCKER_CONTEXT=rootless", output)
+        self.assertFalse(any("create" in argv for (argv, _, _) in self.executor.docker_calls))
+
+    def test_image_inspection_error_retains_daemon_cause(self):
+        """An unavailable daemon is not misreported as proof that the image is absent."""
+        self.executor.checker_image_present = False
+        self.executor.image_inspection_error = "cannot contact selected image store"
+
+        with self.assertRaises(docker_client.OperationError) as image_error:
+            self.execute()
+
+        self.assertIn("cannot contact selected image store", str(image_error.exception))
+        self.assertIn("If the image is absent, next:", str(image_error.exception))
+
     def test_missing_pinned_image_has_explicit_remedy(self):
         """An absent image requires an explicit acquisition command, not an implicit download."""
         self.executor.checker_image_present = False
-        with self.assertRaisesRegex(docker_client.OperationError, "repository/image/acquire"):
+        with self.assertRaises(docker_client.OperationError) as image_error:
             self.execute()
+
+        self.assertIn(
+            "make repository/image/acquire DOCKER_CONTEXT=rootless && make repository/check DOCKER_CONTEXT=rootless",
+            str(image_error.exception),
+        )
+        self.assertFalse(any("pull" in argv for (argv, _, _) in self.executor.docker_calls))
         self.assertFalse(self.executor.container_present)
 
     def test_reject_nonrootless_and_missing_cgroup_enforcement(self):
