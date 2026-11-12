@@ -3,7 +3,8 @@ Hello World: shared mainline, executable examples on branches
 
 9 November 2026
 Repository: numpde/hello-world
-Status: implementation plan. No tooling or example branch is created by this note.
+Status: historical plan. Actual example command composition and semantic
+branch naming are documented in notes/004_application_extensions.txt.
 Normative engineering practices: notes/000_portable_engineering_practices.txt
 
 Decision

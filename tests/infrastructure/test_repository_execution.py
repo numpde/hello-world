@@ -494,7 +494,7 @@ class RepositoryContainerContracts(unittest.TestCase):
         """Switching to unittest-parallel must change only the job command, not its container grants."""
         replacement = finite_job.Command(
             executable="unittest-parallel",
-            arguments=(*repository.UNITTEST_DISCOVERY_ARGS, "--level=module", "-j", "2"),
+            arguments=("-s", "tests", "-t", ".", "-p", "test_*.py", "--level=module", "-j", "2"),
         )
         job = repository.repository_test_job(self.root, repository.CHECKER_IMAGE_ID, replacement)
         create = finite_job.container_arguments(job, "test-token", "test-owner")
@@ -632,6 +632,24 @@ class RepositoryContainerContracts(unittest.TestCase):
         self.assertEqual(len(mounts), 3)
         mounted_sources = {mount.source.name for mount in mounts}
         self.assertFalse(mounted_sources & {".git", "secrets", ".idea", ".vscode"})
+
+    def test_public_application_files_are_admitted_as_read_only_inputs(self):
+        """Application commands, source and native lock can enter the checker without editor files."""
+        (self.root / "project.mk").write_text("app/tests/run:\n\t@echo tests\n")
+        (self.root / "uv.lock").write_text("version = 1\n")
+        (self.root / "src").mkdir()
+        (self.root / "src" / "module.py").write_text("x = 1\n")
+        (self.root / ".idea").mkdir()
+        (self.root / ".idea" / "local.xml").write_text("private")
+
+        (status, _, errors) = self.execute()
+
+        self.assertEqual(status, 0, errors)
+        self.assertEqual(
+            {mount.source.name for mount in repository.public_mounts(self.root)},
+            {"Makefile", "infrastructure", "tests", "project.mk", "uv.lock", "src"},
+        )
+        self.assertFalse(self.executor.container_present)
 
     def test_local_editor_metadata_does_not_block_repository_checks(self):
         """A local IDE's private directory must neither block checks nor be mounted."""

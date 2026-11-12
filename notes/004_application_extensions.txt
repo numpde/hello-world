@@ -1,0 +1,71 @@
+Hello World: application extensions without common Makefile overrides
+=====================================================================
+
+12 November 2026
+Status: implemented common command and source-selection boundaries on main.
+This updates the example naming and command-composition assumptions in
+notes/001_main_and_example_branches.txt, without rewriting that earlier plan.
+
+Ownership
+---------
+
+main owns the root Makefile, Docker and repository operations, and common
+stdlib-only checks. Maintained branches are named after applications, e.g.
+example/openapi-mcp-bridge, rather than by language or packaging mechanism.
+
+An example owns project.mk, its native dependency manifests and locks, source,
+and tests/application/. None of these files replaces a common Make target.
+Python, Rust, Node and mixed examples keep their respective native lock formats;
+main does not maintain an alternative global dependency pin list.
+
+Command composition
+-------------------
+
+The root Makefile owns the app/% dispatch pattern. The application Makefile is
+never included. The root dispatcher runs the requested, validated app/ goal as
+one argument to a separate make -f project.mk subprocess; it does not invoke
+recursive $(MAKE) in the recipe and does not send target names through a shell.
+
+The common process passes the target through a target-specific exported
+environment value, overriding command-line and ambient attempts to change it.
+The subprocess omits inherited Make parser state (including MAKEFLAGS and
+MAKEFILES). Common command names cannot be superseded by a project.mk recipe.
+The distinct application Makefile remains executable code, not a sandbox.
+
+Bare make and make help read application help annotations as plain text without
+evaluating project.mk. Dry-run and question modes never enter the dispatcher.
+A missing project.mk produces an actionable failure on app/ execution. The
+dispatcher propagates the child's exit status, preserving signal-style statuses.
+
+The normal interface is:
+
+    make
+    make repository/check DOCKER_CONTEXT=<local-rootless-context>
+    make app/dependencies/acquire
+    make app/tests/run
+    make app/package/build
+
+The application may also run make -f project.mk explicitly for independent
+debugging, but that is not the normal interface.
+
+Qualification boundaries
+------------------------
+
+The pinned stdlib-only repository checker discovers the maintained
+tests/infrastructure and tests/repo-checks roots. Their discovery coverage is
+checked, and unclassified test roots are rejected. Application tests in
+tests/application are instead executed by app/tests/run using native locked
+application dependencies. Application code does not become a dependency of
+the common checker by merely adding an example branch.
+
+Public checker inputs include the explicitly admitted project.mk, src/ and
+uv.lock paths, alongside common inputs. Their contents are mounted read-only
+and remain subject to the existing permission and symlink checks. Editor
+metadata, secrets and Git history remain excluded; unexpected top-level
+entries still fail admission. Other language ecosystems should extend the
+public input list only when a concrete example requires new paths.
+
+No step in the common repository/check path automatically acquires third-party
+dependencies. For the first example, application lock generation, installed
+FastMCP execution, wheel/sdist qualification and live rootless Docker checks
+remain separate acceptance requirements until actually executed.
