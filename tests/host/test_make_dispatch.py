@@ -95,6 +95,44 @@ class MakeHostContracts(unittest.TestCase):
         self.assertIn("infrastructure.commands.repository check", common_dry_run.stdout)
         self.assertNotIn("REPLACED COMMON CHECK", common_dry_run.stdout)
 
+    def test_repository_commands_do_not_write_bytecode_on_host(self):
+        """Both repository targets must leave checkout Python source untouched."""
+        source = REPOSITORY_ROOT / "infrastructure"
+        destination = self.root / "infrastructure"
+
+        shutil.copyfile(
+            source / "commands" / "repository.py",
+            destination / "commands" / "repository.py",
+        )
+        shutil.copytree(
+            source / "docker",
+            destination / "docker",
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+        )
+
+        # Make the test sensitive to a missing -B even if the caller has
+        # PYTHONDONTWRITEBYTECODE set in their shell.
+        environment = self.make_environment.copy()
+        environment.pop("PYTHONDONTWRITEBYTECODE", None)
+        environment.pop("PYTHONPYCACHEPREFIX", None)
+
+        for target in ("repository/check", "repository/image/acquire"):
+            with self.subTest(target=target):
+                result = subprocess.run(
+                    ["make", "--no-print-directory", target],
+                    cwd=self.root,
+                    env=environment,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                # Missing Docker context stops the host controller before any
+                # daemon operation, but it imports its real Python modules.
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Specify DOCKER_CONTEXT", result.stderr)
+                self.assertEqual(list(destination.rglob("__pycache__")), [])
+                self.assertEqual(list(destination.rglob("*.pyc")), [])
+
     def test_missing_application_makefile_has_actionable_failure(self):
         result = subprocess.run(
             ["make", "--no-print-directory", "app/tests/run"],
