@@ -1,7 +1,6 @@
 .DEFAULT_GOAL := help
 SHELL := /bin/sh
 .SHELLFLAGS := -eu -c
-export PYTHONDONTWRITEBYTECODE := 1
 
 .PHONY: help app/demo/run app/toolchain/acquire app/toolchain/check app/dependencies/lock/update app/dependencies/acquire app/dependencies/check app/tests/run app/package/build app/package/check
 
