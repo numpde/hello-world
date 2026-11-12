@@ -24,6 +24,15 @@ class MakeHostContracts(unittest.TestCase):
         self.fixture = tempfile.TemporaryDirectory(prefix="make-host-contract-")
         self.addCleanup(self.fixture.cleanup)
         self.root = Path(self.fixture.name)
+        # Exercise the real command dispatcher even for missing-project tests.
+        # Do not stage project.mk: each test controls its own presence.
+        shutil.copyfile(REPOSITORY_ROOT / "Makefile", self.root / "Makefile")
+        source = REPOSITORY_ROOT / "infrastructure" / "commands" / "application.py"
+        destination = self.root / "infrastructure" / "commands"
+        destination.mkdir(parents=True)
+        (destination.parent / "__init__.py").write_text("")
+        (destination / "__init__.py").write_text("")
+        shutil.copyfile(source, destination / "application.py")
         self.make_environment = {
             name: value
             for (name, value) in os.environ.items()
@@ -32,7 +41,6 @@ class MakeHostContracts(unittest.TestCase):
         self.make_environment["PYTHONDONTWRITEBYTECODE"] = "1"
 
     def test_help_and_dry_run_do_not_parse_application_makefile(self):
-        shutil.copyfile(REPOSITORY_ROOT / "Makefile", self.root / "Makefile")
         (self.root / "project.mk").write_text(
             "PROBE := $(shell touch PARSED_PROJECT_MAKE)\n"
             "app/tests/run: ## Application tests.\n\t@echo actually-ran\n"
@@ -54,13 +62,6 @@ class MakeHostContracts(unittest.TestCase):
                     self.assertIn("app/tests/run", result.stdout)
 
     def test_root_delegation_is_non_overriding_and_performs_real_execution(self):
-        shutil.copyfile(REPOSITORY_ROOT / "Makefile", self.root / "Makefile")
-        source = REPOSITORY_ROOT / "infrastructure" / "commands" / "application.py"
-        destination = self.root / "infrastructure" / "commands"
-        destination.mkdir(parents=True)
-        (destination.parent / "__init__.py").write_text("")
-        (destination / "__init__.py").write_text("")
-        shutil.copyfile(source, destination / "application.py")
         (self.root / "project.mk").write_text(
             ".PHONY: app/tests/run repository/check\n"
             "app/tests/run: ## Run application tests.\n"
@@ -95,7 +96,6 @@ class MakeHostContracts(unittest.TestCase):
         self.assertNotIn("REPLACED COMMON CHECK", common_dry_run.stdout)
 
     def test_missing_application_makefile_has_actionable_failure(self):
-        shutil.copyfile(REPOSITORY_ROOT / "Makefile", self.root / "Makefile")
         result = subprocess.run(
             ["make", "--no-print-directory", "app/tests/run"],
             cwd=self.root,
