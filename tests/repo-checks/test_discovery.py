@@ -11,6 +11,7 @@ from infrastructure.commands import repository
 ROOT = Path(__file__).resolve().parents[2]
 COMMON_TEST_DIRS = {"infrastructure", "repo-checks"}
 APPLICATION_TEST_DIRS = {"application"}
+HOST_TEST_DIRS = {"host"}
 
 
 class DiscoveryContracts(unittest.TestCase):
@@ -31,7 +32,7 @@ class DiscoveryContracts(unittest.TestCase):
             entry.name for entry in (ROOT / "tests").iterdir()
             if entry.is_dir() and entry.name != "__pycache__"
         }
-        self.assertEqual(actual_directories - APPLICATION_TEST_DIRS, COMMON_TEST_DIRS)
+        self.assertEqual(actual_directories - APPLICATION_TEST_DIRS - HOST_TEST_DIRS, COMMON_TEST_DIRS)
 
         loader = unittest.TestLoader()
         suites = [

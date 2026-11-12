@@ -55,7 +55,13 @@ The pinned stdlib-only repository checker discovers the maintained
 tests/infrastructure and tests/repo-checks roots. Their discovery coverage is
 checked, and unclassified test roots are rejected. Application tests in
 tests/application are instead executed by app/tests/run using native locked
-application dependencies. Application code does not become a dependency of
+application dependencies.
+
+Real GNU Make behavior needs GNU Make, which is not an assumed dependency of
+the minimal Python checker image. The separate repository/make/check target
+runs host-only Make integration tests using temporary checkouts, without
+network, Docker or source-test fallback. It verifies non-evaluating help,
+dry runs, and actual delegation. Run both qualification lanes where supported. Application code does not become a dependency of
 the common checker by merely adding an example branch.
 
 Public checker inputs include the explicitly admitted project.mk, src/ and
