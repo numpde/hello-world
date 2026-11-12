@@ -1,0 +1,52 @@
+{
+  "openapi": "3.1.0",
+  "info": {"title": "Example documents API", "version": "1.0.0"},
+  "paths": {
+    "/documents": {
+      "get": {
+        "operationId": "listDocuments",
+        "summary": "List documents",
+        "responses": {
+          "200": {"description": "Documents", "content": {
+            "application/json": {"schema": {"type": "object", "properties": {
+              "documents": {"type": "array", "items": {"$ref": "#/components/schemas/Document"}}
+            }, "required": ["documents"]}}
+          }}
+        }
+      },
+      "post": {
+        "operationId": "createDocument",
+        "summary": "Create a document",
+        "requestBody": {"required": true, "content": {
+          "application/json": {"schema": {"type": "object", "properties": {
+            "title": {"type": "string", "minLength": 1}
+          }, "required": ["title"], "additionalProperties": false}}
+        }},
+        "responses": {"201": {"description": "Created", "content": {
+          "application/json": {"schema": {"$ref": "#/components/schemas/Document"}}
+        }}}
+      }
+    },
+    "/documents/{documentId}": {
+      "get": {
+        "operationId": "getDocument",
+        "summary": "Read a document",
+        "parameters": [{"in": "path", "name": "documentId", "required": true,
+          "schema": {"type": "string", "minLength": 1}}],
+        "responses": {"200": {"description": "Document", "content": {
+          "application/json": {"schema": {"$ref": "#/components/schemas/Document"}}
+        }}, "404": {"description": "Not found"}}
+      }
+    },
+    "/admin/keys": {
+      "get": {
+        "operationId": "adminKeys",
+        "summary": "Internal administrative operation (never an MCP tool)",
+        "responses": {"200": {"description": "Private result"}}
+      }
+    }
+  },
+  "components": {"schemas": {"Document": {"type": "object", "properties": {
+    "id": {"type": "string"}, "title": {"type": "string"}
+  }, "required": ["id", "title"]}}}
+}
