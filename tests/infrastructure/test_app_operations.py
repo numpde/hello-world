@@ -105,6 +105,45 @@ class ApplicationOperationsContracts(unittest.TestCase):
         self.assertNotIn("/input/uv.lock", {m.target for m in seen[0]["inputs"]})
         self.assertTrue((self.root / ".idea/private.xml").is_file())
 
+    def test_package_build_is_offline_and_receives_only_public_sources(self):
+        env_dir = self.prepared()
+        seen = []
+
+        def fake_build(_docker, _context, _image, _command, **options):
+            seen.append(options)
+            directory = next(m.source for m in options["outputs"] if m.target == "/output")
+            (directory / "example-0.1.0-py3-none-any.whl").write_bytes(b"wheel")
+            (directory / "example-0.1.0.tar.gz").write_bytes(b"source")
+
+        with (
+            patch.object(app, "qualify_dependencies", return_value=env_dir),
+            patch.object(app, "run_job", side_effect=fake_build),
+        ):
+            app.action(object(), "science", "package/build")
+        self.assertEqual(len(seen), 1)
+        self.assertFalse(seen[0].get("network", False))
+        self.assertEqual({m.target for m in seen[0]["inputs"]},
+                         {"/project/src", "/project/pyproject.toml", "/environment"})
+        self.assertTrue((self.state / "dist/example-0.1.0-py3-none-any.whl").is_file())
+
+    def test_installed_wheel_tests_never_mount_package_source(self):
+        env_dir = self.prepared()
+        dist = self.state / "dist"
+        dist.mkdir()
+        (dist / "example-0.1.0-py3-none-any.whl").write_bytes(b"wheel")
+        seen = []
+        with (
+            patch.object(app, "qualify_dependencies", return_value=env_dir),
+            patch.object(app, "run_job", side_effect=lambda *a, **kw: seen.append(kw)),
+        ):
+            app.action(object(), "science", "package/check")
+        self.assertEqual(len(seen), 1)
+        self.assertFalse(seen[0].get("network", False))
+        self.assertEqual({m.target for m in seen[0]["inputs"]},
+                         {"/worker/worker.py", "/testroot/tests", "/deps", "/dist"})
+        self.assertEqual([mount.target for mount in seen[0]["outputs"]], ["/output"])
+        self.assertTrue((self.root / ".idea/private.xml").is_file())
+
     def test_toolchain_check_does_not_pull_or_build(self):
         commands = []
         with patch.object(app, "run_job", side_effect=lambda *args, **kwargs: commands.append(args[3])):
