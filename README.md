@@ -22,8 +22,9 @@ application's own authorization. HTTP is allowed only for loopback origins;
 other origins require HTTPS. Redirects and inherited proxy settings are off.
 
 The demonstration specification and two allowlists live under
-`tests/application/fixtures/` **only**. They are not installed in the wheel
-and are not application defaults.
+`tests/application/fixtures/` **only**. The demonstration HTTP server also
+lives under `tests/application/`. None are installed in the wheel or used
+as application defaults.
 
 ## Qualification sequence
 

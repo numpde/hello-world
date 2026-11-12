@@ -15,7 +15,7 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 import yaml
-from openapi_mcp_bridge.demo_api import DocumentAPI
+from tests.application.demo_api import DocumentAPI
 from openapi_mcp_bridge.selection import load_document, load_operations, selected_contract
 
 

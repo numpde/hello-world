@@ -43,4 +43,4 @@ app/mcp/run: ## Run the stdio MCP server using external API and operation allowl
 
 app/demo/run: ## Serve the local demonstration REST API on a chosen loopback port.
 	@test -f uv.lock || { echo 'Missing uv.lock. Next: make app/dependencies/acquire.' >&2; exit 2; }
-	@uv run --locked --offline -- python -m openapi_mcp_bridge.demo_api
+	@uv run --locked --offline -- python -m tests.application.demo_api

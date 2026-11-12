@@ -8,7 +8,7 @@ from pathlib import Path
 
 from fastmcp import Client
 from openapi_mcp_bridge.bridge import api_client, create_server, require_api_origin
-from openapi_mcp_bridge.demo_api import DocumentAPI
+from tests.application.demo_api import DocumentAPI
 from openapi_mcp_bridge.selection import load_document, load_operations
 
 
