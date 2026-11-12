@@ -58,6 +58,8 @@ is not permitted. API authentication remains an application/client concern.
 HTTP origins must be loopback; remote APIs require HTTPS.
 
 The demo HTTP server is a *test fixture*, not a deployed service or app default.
+Use `make app/demo/run` to start that local stdlib-only fixture on loopback;
+this operation needs no `uv`, dependency installation or Docker context.
 `app/package/check` installs the wheel into a fresh virtual environment and
 runs the real application tests **without mounting package source code**.
 

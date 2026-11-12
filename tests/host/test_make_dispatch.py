@@ -111,6 +111,7 @@ class MakeHostContracts(unittest.TestCase):
         for target in (
             "app/toolchain/acquire", "app/dependencies/lock/update",
             "app/dependencies/acquire", "app/tests/run", "app/package/check",
+            "app/demo/run",
         ):
             self.assertIn(target, result.stdout)
         self.assertNotIn("uv: command not found", result.stderr)

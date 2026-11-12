@@ -3,7 +3,7 @@ SHELL := /bin/sh
 .SHELLFLAGS := -eu -c
 export PYTHONDONTWRITEBYTECODE := 1
 
-.PHONY: help app/toolchain/acquire app/toolchain/check app/dependencies/lock/update app/dependencies/acquire app/dependencies/check app/tests/run app/package/build app/package/check
+.PHONY: help app/demo/run app/toolchain/acquire app/toolchain/check app/dependencies/lock/update app/dependencies/acquire app/dependencies/check app/tests/run app/package/build app/package/check
 
 help: ## List application commands without evaluating application operations.
 	@awk -F ':[^#]*## ' '/^[a-z][a-z0-9/-]*:.*## / { printf "  %-34s %s\n", $$1, $$2 }' project.mk
@@ -31,3 +31,6 @@ app/package/build: ## Build wheel and sdist offline without installing host tool
 
 app/package/check: ## Install wheel separately and run application tests offline.
 	@python3 -B -m app.operations package/check
+
+app/demo/run: ## Run the stdlib documents API fixture on host loopback; Ctrl-C stops it.
+	@python3 -B -m tests.application.demo_api
