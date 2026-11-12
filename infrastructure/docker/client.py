@@ -255,12 +255,13 @@ class DockerClient:
             raise OperationError("Docker daemon ID is missing or invalid")
         return engine_identity
 
-    def image(self, reference: str, expected_id: str, acquire_hint: str) -> str:
+    def image(self, reference: str, expected_id: str | None, acquire_hint: str) -> str:
         """Admit a digest-pinned image under both supported Docker image stores.
 
         The classic store reports the configuration digest as its image ID;
         containerd can report the pinned OCI manifest/index digest instead.
-        Return the observed identity for container creation and ownership checks.
+        When a config ID is unknown, the digest-selected reference remains
+        the content identity. Return the observed ID for container ownership.
         """
         (image_name, separator, pinned_image_digest) = reference.rpartition("@")
         if not image_name or not separator or not re.fullmatch(r"sha256:[0-9a-f]{64}", pinned_image_digest):
@@ -276,7 +277,12 @@ class DockerClient:
             )
 
         observed_image_id = checked_result(image_inspection_result, "Pinned image inspection")
-        if observed_image_id not in (expected_id, pinned_image_digest):
+        if expected_id is None:
+            # The pinned reference supplies the registry identity when a
+            # separate configuration digest has not been recorded.
+            if not re.fullmatch(r"sha256:[0-9a-f]{64}", observed_image_id):
+                raise OperationError(f"Invalid digest-selected image identity: {observed_image_id!r}")
+        elif observed_image_id not in (expected_id, pinned_image_digest):
             raise OperationError(
                 f"Unrecognized pinned image identity: {observed_image_id = }, "
                 f"{expected_id = }, {pinned_image_digest = }. "
@@ -285,7 +291,7 @@ class DockerClient:
 
         return observed_image_id
 
-    def acquire(self, reference: str, expected_id: str) -> str:
+    def acquire(self, reference: str, expected_id: str | None) -> str:
         """Pull the specified linux/amd64 image and verify its local config ID.
         
         This is the explicit networked acquisition path. Ordinary jobs only
