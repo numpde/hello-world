@@ -95,6 +95,26 @@ class MakeHostContracts(unittest.TestCase):
         self.assertIn("infrastructure.commands.repository check", common_dry_run.stdout)
         self.assertNotIn("REPLACED COMMON CHECK", common_dry_run.stdout)
 
+    def test_real_example_help_is_read_only_and_lists_commands(self):
+        project = REPOSITORY_ROOT / "project.mk"
+        if not project.is_file():
+            self.skipTest("main has no application Makefile")
+        result = subprocess.run(
+            ["make", "--no-print-directory", "-f", "project.mk", "help"],
+            cwd=REPOSITORY_ROOT,
+            env=self.make_environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for target in (
+            "app/toolchain/acquire", "app/dependencies/lock/update",
+            "app/dependencies/acquire", "app/tests/run", "app/package/check",
+        ):
+            self.assertIn(target, result.stdout)
+        self.assertNotIn("uv: command not found", result.stderr)
+
     def test_missing_application_makefile_has_actionable_failure(self):
         result = subprocess.run(
             ["make", "--no-print-directory", "app/tests/run"],
