@@ -11,14 +11,15 @@ adminKeys is deliberately absent from both policies.
 
 ## Qualification sequence
 
-1. `make help` (read-only); run `make repository/check DOCKER_CONTEXT=science`
+1. `make help` (read-only); run `make repository/check DOCKER_CONTEXT=<local-rootless-context>`
    separately to qualify the common infrastructure on an admitted rootless engine.
-2. `make app/dependencies/acquire` (explicitly networked).
-3. Review the generated uv.lock and commit it. Do not manufacture a lockfile.
-4. `make app/dependencies/check` (read-only, offline).
-5. `make app/dependencies/prepare` (install from cache only).
-6. `make app/tests/run` (real MCP-client and HTTP tests).
-7. `make app/package/build` (offline wheel and sdist).
+2. `make repository/make/check` (real host GNU Make qualification, no Docker).
+3. `make app/dependencies/acquire` (explicitly networked).
+4. Review the generated uv.lock and commit it. Do not manufacture a lockfile.
+5. `make app/dependencies/check` (read-only, offline).
+6. `make app/dependencies/prepare` (install from cache only).
+7. `make app/tests/run` (real MCP-client and HTTP tests).
+8. `make app/package/build` (offline wheel and sdist).
 
 To explore manually, start `make app/demo/run`, then set
 `APP_API_BASE=http://127.0.0.1:8765` and run `make app/mcp/run`.
