@@ -283,9 +283,11 @@ class RepositoryContainerContracts(unittest.TestCase):
 
     def test_work_deadline_during_discovery_still_retires_container(self):
         """Work expiry after create cannot consume the separate cleanup budget."""
+        job_timeout = repository.repository_test_job(self.root, repository.CHECKER_IMAGE_ID).timeout
+
         def observed_work_time() -> float:
             create_was_sent = any("create" in argv for (argv, _, _) in self.executor.docker_calls)
-            return finite_job.WORK_TIMEOUT + 1.0 if create_was_sent else 0.0
+            return job_timeout + 1.0 if create_was_sent else 0.0
 
         with patch.object(finite_job.time, "monotonic", side_effect=observed_work_time):
             (operation_status, _, errors) = self.execute()
@@ -302,12 +304,16 @@ class RepositoryContainerContracts(unittest.TestCase):
 
     def test_expired_work_budget_never_requests_create(self):
         """A timeout before Docker create leaves no daemon resources or recovery claim."""
-        with patch.object(finite_job, "WORK_TIMEOUT", 0):
+        # Work deadlines are determined by the job's configured timeout,
+        # not by changing the module constant after Job was defined.
+        job_timeout = repository.repository_test_job(self.root, repository.CHECKER_IMAGE_ID).timeout
+        with patch.object(finite_job.time, "monotonic", side_effect=(0.0, job_timeout + 1.0)):
             (operation_status, _, errors) = self.execute()
 
         self.assertEqual(operation_status, 1)
         self.assertIn("Docker work budget exhausted", errors)
         self.assertNotIn("Retained operation", errors)
+        self.assertFalse(self.executor.container_present)
         self.assertFalse(any("create" in argv for (argv, _, _) in self.executor.docker_calls))
 
     def test_receipt_write_failure_does_not_claim_recovery(self):
