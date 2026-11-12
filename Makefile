@@ -18,10 +18,10 @@ help: ## Show commands, effects and next steps without touching Docker.
 	  '  make repository/image/acquire DOCKER_CONTEXT=example-rootless' \
 	  '  make repository/check DOCKER_CONTEXT=example-rootless' \
 	  'Acquisition can download images; repository/check stays offline.' ''
-	@awk -F ':[^#]*## ' '/^[a-z][a-z0-9/-]*:.*## / { printf "  %-28s %s\n", $1, $2 }' Makefile
+	@awk -F ':[^#]*## ' '/^[a-z][a-z0-9/-]*:.*## / { printf "  %-28s %s\n", $$1, $$2 }' Makefile
 	@if test -f project.mk; then \
 		printf '%s\n' '' 'Application commands:'; \
-		awk -F ':[^#]*## ' '/^app\/[a-z0-9][a-z0-9_/-]*:.*## / { printf "  %-28s %s\n", $1, $2 }' project.mk; \
+		awk -F ':[^#]*## ' '/^app\/[a-z0-9][a-z0-9_/-]*:.*## / { printf "  %-28s %s\n", $$1, $$2 }' project.mk; \
 	fi
 
 repository/check: ## Run repository checks offline in a confined Docker container.

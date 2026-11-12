@@ -30,7 +30,7 @@ class MakeContracts(unittest.TestCase):
         self.assertNotIn("$(shell", makefile_text)
         self.assertIn("$(value DOCKER_CONTEXT)", makefile_text)
         # AWK field references must survive Make's dollar expansion.
-        self.assertIn('$1, $2', makefile_text)
+        self.assertIn('$$1, $$2', makefile_text)
         self.assertNotIn("include project.mk", makefile_text)
         self.assertIn("app/%: override export HELLO_WORLD_APP_TARGET = $@", makefile_text)
         self.assertIn("app/%: __app_dispatch_force", makefile_text)
