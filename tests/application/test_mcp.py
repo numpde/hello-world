@@ -4,10 +4,15 @@ from __future__ import annotations
 
 import threading
 import unittest
+from pathlib import Path
 
 from fastmcp import Client
 from openapi_mcp_bridge.bridge import api_client, create_server, require_api_origin
 from openapi_mcp_bridge.demo_api import DocumentAPI
+from openapi_mcp_bridge.selection import load_document, load_operations
+
+
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 
 class OriginContracts(unittest.TestCase):
@@ -28,6 +33,7 @@ class ExecutableMCPContracts(unittest.IsolatedAsyncioTestCase):
         self.thread = threading.Thread(target=self.api.serve_forever, daemon=True)
         self.thread.start()
         self.http = api_client(f"http://127.0.0.1:{self.api.server_port}")
+        self.spec = load_document(FIXTURES / "documents.openapi.json")
 
     async def asyncTearDown(self):
         await self.http.aclose()
@@ -36,7 +42,8 @@ class ExecutableMCPContracts(unittest.IsolatedAsyncioTestCase):
         self.thread.join(timeout=5)
 
     async def test_read_only_tools_invoke_real_http_but_hide_other_routes(self):
-        async with Client(create_server(self.http)) as mcp:
+        operations = load_operations(FIXTURES / "read-only.json")
+        async with Client(create_server(self.http, self.spec, operations)) as mcp:
             names = {tool.name for tool in await mcp.list_tools()}
             self.assertEqual(names, {"listDocuments", "getDocument"})
             listing = await mcp.call_tool("listDocuments", {})
@@ -58,7 +65,8 @@ class ExecutableMCPContracts(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(self.api.seen_requests), 2)
 
     async def test_explicit_write_policy_enables_mutation_but_not_admin(self):
-        async with Client(create_server(self.http, policy="with-create")) as mcp:
+        operations = load_operations(FIXTURES / "with-create.json")
+        async with Client(create_server(self.http, self.spec, operations)) as mcp:
             names = {tool.name for tool in await mcp.list_tools()}
             self.assertEqual(names, {"listDocuments", "getDocument", "createDocument"})
             response = await mcp.call_tool("createDocument", {"title": "Added by MCP"})

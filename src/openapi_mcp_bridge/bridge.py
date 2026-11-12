@@ -1,14 +1,15 @@
-"""Bind a captured OpenAPI contract to FastMCP and one selected API origin."""
+"""Bind a caller-supplied OpenAPI contract to FastMCP and one API origin."""
 
 from __future__ import annotations
 
+from typing import Any
 from urllib.parse import urlsplit
 
 import httpx2
 from fastmcp import FastMCP
 from fastmcp.server.providers.openapi import OpenAPIProvider
 
-from .selection import captured_contract, enabled_operations, selected_contract
+from .selection import selected_contract
 
 
 def require_api_origin(value: str) -> str:
@@ -30,10 +31,14 @@ def require_api_origin(value: str) -> str:
     raise ValueError("Use HTTPS for remote APIs; plain HTTP is limited to loopback")
 
 
-def create_server(client: httpx2.AsyncClient, policy: str = "read-only") -> FastMCP:
-    """Let FastMCP construct executable tools from the selected contract."""
-    contract = selected_contract(captured_contract(), enabled_operations(policy))
-    return FastMCP("Document API bridge", providers=[OpenAPIProvider(contract, client)])
+def create_server(
+    client: httpx2.AsyncClient,
+    spec: dict[str, Any],
+    operation_ids: frozenset[str],
+) -> FastMCP:
+    """Generate MCP tools only for explicitly selected external operations."""
+    contract = selected_contract(spec, operation_ids)
+    return FastMCP("OpenAPI bridge", providers=[OpenAPIProvider(contract, client)])
 
 
 def api_client(api_origin: str) -> httpx2.AsyncClient:

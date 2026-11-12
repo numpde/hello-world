@@ -37,9 +37,9 @@ app/package/build: ## Build an application wheel and sdist without accessing the
 	@uv build --offline --out-dir dist
 	@printf '%s\n' 'Next: inspect dist/ and verify installation outside the checkout.'
 
-app/mcp/run: ## Run the stdio MCP server; APP_API_BASE must name the intended API.
+app/mcp/run: ## Run the stdio MCP server using external API and operation allowlist files.
 	@test -f uv.lock || { echo 'Missing uv.lock. Next: make app/dependencies/acquire.' >&2; exit 2; }
-	@uv run --locked --offline -- python -m openapi_mcp_bridge --api-base "$${APP_API_BASE:?Set APP_API_BASE to the API origin}" --policy read-only
+	@uv run --locked --offline -- python -m openapi_mcp_bridge --api-base "${APP_API_BASE:?Set APP_API_BASE to the API origin}" --openapi "${APP_OPENAPI:?Set APP_OPENAPI to the external OpenAPI file}" --allowlist "${APP_ALLOWLIST:?Set APP_ALLOWLIST to an operationIds JSON/YAML file}"
 
 app/demo/run: ## Serve the local demonstration REST API on a chosen loopback port.
 	@test -f uv.lock || { echo 'Missing uv.lock. Next: make app/dependencies/acquire.' >&2; exit 2; }
