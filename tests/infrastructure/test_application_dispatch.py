@@ -76,6 +76,5 @@ class ApplicationDispatchContracts(unittest.TestCase):
                 self.assertIn("Next: make help", errors.getvalue())
 
 
-
 if __name__ == "__main__":
     unittest.main()

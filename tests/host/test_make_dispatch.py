@@ -84,7 +84,6 @@ class MakeHostContracts(unittest.TestCase):
         self.assertIn("infrastructure.commands.repository check", common_dry_run.stdout)
         self.assertNotIn("REPLACED COMMON CHECK", common_dry_run.stdout)
 
-
     def test_missing_application_makefile_has_actionable_failure(self):
         shutil.copyfile(REPOSITORY_ROOT / "Makefile", self.root / "Makefile")
         result = subprocess.run(
