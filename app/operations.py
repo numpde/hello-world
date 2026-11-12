@@ -127,7 +127,7 @@ def run_job(
 
 
 def read(path: Path, target: str) -> finite_job.ReadOnlyMount:
-    if path.is_symlink() or not path.exists():
+    if path.is_symlink() or not (path.is_file() or path.is_dir()):
         raise client.OperationError(f"Missing regular application input: {path}")
     return finite_job.ReadOnlyMount(path, target)
 
@@ -204,6 +204,8 @@ def action(docker: client.DockerClient, context: str, name: str) -> None:
     state = state_directory()
     cache = state / "uv-cache"
     if name == "dependencies/lock/update":
+        if (ROOT / "uv.lock").is_symlink():
+            raise client.OperationError("Refusing linked uv.lock; remove the link before updating")
         with tempfile.TemporaryDirectory(prefix="hello-world-lock-") as temporary:
             output = Path(temporary)
             run_job(docker, context, image, worker("lock"),
@@ -227,11 +229,14 @@ def action(docker: client.DockerClient, context: str, name: str) -> None:
         return
 
     if name == "dependencies/acquire":
+        identity = prepared_identity(image)
+        (state / "prepared.json").unlink(missing_ok=True)
         run_job(docker, context, image, worker("dependencies"),
                 inputs=input_metadata(True) + (read(ROOT / "app/worker.py", "/worker/worker.py"),),
                 outputs=(write(cache, "/cache"), write(state / "environment", "/environment")),
                 network=True, timeout=900, environment=uv_environment())
-        identity = prepared_identity(image)
+        if identity != prepared_identity(image):
+            raise client.OperationError("Application inputs changed during dependency acquisition; repeat it")
         state.mkdir(parents=True, exist_ok=True)
         temporary_stamp = state / "prepared.json.tmp"
         temporary_stamp.write_text(json.dumps(identity, sort_keys=True) + "\n", encoding="utf-8")

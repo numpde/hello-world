@@ -3,7 +3,10 @@ SHELL := /bin/sh
 .SHELLFLAGS := -eu -c
 export PYTHONDONTWRITEBYTECODE := 1
 
-.PHONY: app/toolchain/acquire app/toolchain/check app/dependencies/lock/update app/dependencies/acquire app/dependencies/check app/tests/run app/package/build app/package/check
+.PHONY: help app/toolchain/acquire app/toolchain/check app/dependencies/lock/update app/dependencies/acquire app/dependencies/check app/tests/run app/package/build app/package/check
+
+help: ## List application commands without evaluating application operations.
+	@awk -F ':[^#]*## ' '/^[a-z][a-z0-9/-]*:.*## / { printf "  %-34s %s\\n", $1, $2 }' project.mk
 
 app/toolchain/acquire: ## Acquire digest-pinned Python and uv images; build toolchain offline.
 	@python3 -B -m app.operations toolchain/acquire
