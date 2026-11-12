@@ -7,6 +7,7 @@ file discovery. A failing suite must leave the useful tracebacks at the end.
 import contextlib
 import io
 import unittest
+from unittest.mock import patch
 
 from infrastructure.testing import unittest_runner
 
@@ -71,6 +72,38 @@ class ResultContracts(unittest.TestCase):
         run_status, printed_report = self.report(Skipped(), Expected())
         self.assertEqual(run_status, 0)
         self.assertEqual(printed_report.splitlines()[-1], "OK")
+
+    def test_multiple_start_directories_are_run(self):
+        """Both selected common suites run, without importing application tests."""
+        class First(unittest.TestCase):
+            def runTest(self):
+                self.assertTrue(True)
+
+        class Second(unittest.TestCase):
+            def runTest(self):
+                self.assertTrue(True)
+
+        output = io.StringIO()
+        loader = unittest_runner.unittest.defaultTestLoader
+        with (
+            patch.object(unittest_runner.os, "geteuid", return_value=1000),
+            patch.object(unittest_runner.os, "getegid", return_value=1000),
+            patch.object(loader, "discover", side_effect=[
+                unittest.TestSuite([First()]), unittest.TestSuite([Second()]),
+            ]) as discovered,
+            contextlib.redirect_stdout(output),
+        ):
+            status = unittest_runner.main([
+                "-s", "tests/infrastructure", "-s", "tests/repo-checks",
+                "-t", ".", "-p", "test_*.py",
+            ])
+
+        self.assertEqual(status, 0, output.getvalue())
+        self.assertIn("Ran 2 tests", output.getvalue())
+        self.assertEqual(
+            [call.kwargs["start_dir"] for call in discovered.call_args_list],
+            ["tests/infrastructure", "tests/repo-checks"],
+        )
 
     def test_no_tests_is_an_error(self):
         """An empty selection must not be reported as a green test run."""

@@ -1,8 +1,4 @@
-"""Verify that unittest discovers every immediate test directory.
-
-Discovery must use the command's actual selection options. A missing
-package marker cannot hide a directory from the expected set.
-"""
+"""Verify that common tests are discovered without importing optional app tests."""
 
 from __future__ import annotations
 
@@ -13,45 +9,55 @@ from infrastructure.commands import repository
 
 
 ROOT = Path(__file__).resolve().parents[2]
+COMMON_TEST_DIRS = {"infrastructure", "repo-checks"}
+APPLICATION_TEST_DIRS = {"application"}
 
 
 class DiscoveryContracts(unittest.TestCase):
-    """Compare filesystem test directories with unittest's loaded modules."""
+    """Keep the stdlib-only lane complete while application tests remain separate."""
 
-    def test_discovery_covers_test_directories(self):
-        """Compare all immediate test directories with modules loaded by the actual discovery settings."""
-        discovery_options = dict(zip(
-            repository.UNITTEST_DISCOVERY_ARGS[::2],
-            repository.UNITTEST_DISCOVERY_ARGS[1::2],
-            strict=True,
-        ))
-        test_root = ROOT / discovery_options["-s"]
-        test_loader = unittest.TestLoader()
-        discovered_suite = test_loader.discover(
-            start_dir=str(test_root),
-            top_level_dir=str(ROOT / discovery_options["-t"]),
-            pattern=discovery_options["-p"],
-        )
+    def test_discovery_covers_maintained_common_suites(self):
+        """Every common directory is selected; other test directories need a known owner."""
+        args = repository.UNITTEST_DISCOVERY_ARGS
+        start_directories = [args[i + 1] for (i, name) in enumerate(args) if name == "-s"]
+        top_level_dir = args[args.index("-t") + 1]
+        pattern = args[args.index("-p") + 1]
 
-        def discovered_cases(nested_suite):
-            """Walk unittest's nested suites to collect their test cases."""
-            for test_or_suite in nested_suite:
-                if isinstance(test_or_suite, unittest.TestSuite):
-                    yield from discovered_cases(test_or_suite)
-                else:
-                    yield test_or_suite
+        expected_common_dirs = {Path(directory).name for directory in start_directories}
+        self.assertEqual(expected_common_dirs, COMMON_TEST_DIRS)
+        self.assertEqual(len(start_directories), len(COMMON_TEST_DIRS))
 
-        # Every immediate directory under tests/ must be discovered.
-        # A missing package marker must fail this check, not hide the directory.
-        expected_directories = {
-            directory.name
-            for directory in test_root.iterdir()
-            if directory.is_dir()
+        actual_directories = {
+            entry.name for entry in (ROOT / "tests").iterdir()
+            if entry.is_dir() and entry.name != "__pycache__"
         }
-        discovered_directories = {case.id().split(".")[1] for case in discovered_cases(discovered_suite)}
+        self.assertEqual(actual_directories - APPLICATION_TEST_DIRS, COMMON_TEST_DIRS)
 
-        self.assertFalse(test_loader.errors)
-        self.assertEqual(discovered_directories, expected_directories)
+        loader = unittest.TestLoader()
+        suites = [
+            loader.discover(
+                start_dir=str(ROOT / directory),
+                top_level_dir=str(ROOT / top_level_dir),
+                pattern=pattern,
+            )
+            for directory in start_directories
+        ]
+
+        def test_cases(suite):
+            for entry in suite:
+                if isinstance(entry, unittest.TestSuite):
+                    yield from test_cases(entry)
+                else:
+                    yield entry
+
+        observed_directories = {
+            case.id().split(".")[1]
+            for suite in suites
+            for case in test_cases(suite)
+        }
+
+        self.assertFalse(loader.errors)
+        self.assertEqual(observed_directories, COMMON_TEST_DIRS)
 
 
 if __name__ == "__main__":

@@ -23,13 +23,22 @@ CHECKER_IMAGE_REFERENCE = (
     "sha256:623674a14ef93d052bb9b0de4dbf5f28eb578a35263838941cc8aa43213c1487"
 )
 CHECKER_IMAGE_ID = "sha256:37ccb536022bb36c4570856b55ebfa85bf07827e3c2fa3eba37f0dac62eebc05"
-PUBLIC_ROOTS = frozenset({"Makefile", "notes", "infrastructure", "tests", ".github", ".gitignore", "README.md", "pyproject.toml"})
+PUBLIC_ROOTS = frozenset({
+    "Makefile", "notes", "infrastructure", "tests", ".github",
+    ".gitignore", "README.md", "pyproject.toml",
+    "project.mk", "src", "uv.lock",
+})
 # Local editor metadata is not source material and must not enter the checker.
 PRIVATE_ROOTS = frozenset({".git", ".agents", ".codex", ".idea", ".vscode", ".aws", ".venv", ".pytest_cache", "__pycache__", ".env", "secrets", "build", "dist"})
 
-# Discovery args are shared with unittest-parallel's CLI. Changing runners
-# changes Command and the pinned checker image, not the Docker lifecycle.
-UNITTEST_DISCOVERY_ARGS = ("-s", "tests", "-t", ".", "-p", "test_*.py")
+# The stdlib-only checker runs common contracts. Application-specific tests run
+# with their own locked dependencies through app/tests/run.
+UNITTEST_DISCOVERY_ARGS = (
+    "-s", "tests/infrastructure",
+    "-s", "tests/repo-checks",
+    "-t", ".",
+    "-p", "test_*.py",
+)
 UNITTEST_COMMAND = finite_job.Command(
     executable="python3",
     arguments=("-I", "-B", "/workspace/infrastructure/testing/unittest_runner.py", *UNITTEST_DISCOVERY_ARGS),

@@ -54,21 +54,25 @@ def run(suite: unittest.TestSuite) -> int:
 def main(argv: list[str] | None = None) -> int:
     """Parse standard unittest discovery flags and run the selected suite.
     
-    The caller supplies the start directory, top-level directory and filename
-    pattern. Refuse root execution; container admission is checked elsewhere."""
+    The caller supplies one or more start directories, the top-level directory
+    and filename pattern. Refuse root execution; container admission is
+    checked elsewhere."""
     if os.geteuid() == 0 or os.getegid() == 0:
         print("Unittest runner must not run as root", file=sys.stderr)
         return 2
 
     discovery_parser = argparse.ArgumentParser(description="Run repository tests and report failures last")
-    discovery_parser.add_argument("-s", "--start-directory", required=True)
+    discovery_parser.add_argument("-s", "--start-directory", required=True, action="append")
     discovery_parser.add_argument("-t", "--top-level-directory", required=True)
     discovery_parser.add_argument("-p", "--pattern", required=True)
     discovery_args = discovery_parser.parse_args(argv)
-    discovered_suite = unittest.defaultTestLoader.discover(
-        start_dir=discovery_args.start_directory,
-        top_level_dir=discovery_args.top_level_directory,
-        pattern=discovery_args.pattern,
+    discovered_suite = unittest.TestSuite(
+        unittest.defaultTestLoader.discover(
+            start_dir=directory,
+            top_level_dir=discovery_args.top_level_directory,
+            pattern=discovery_args.pattern,
+        )
+        for directory in discovery_args.start_directory
     )
     return run(discovered_suite)
 
