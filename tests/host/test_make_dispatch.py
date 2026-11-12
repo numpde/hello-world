@@ -24,6 +24,19 @@ class MakeHostContracts(unittest.TestCase):
         self.fixture = tempfile.TemporaryDirectory(prefix="make-host-contract-")
         self.addCleanup(self.fixture.cleanup)
         self.root = Path(self.fixture.name)
+        # All three tests exercise the real dispatcher in a temporary checkout.
+        # project.mk is deliberately staged only by tests that need it.
+        shutil.copyfile(REPOSITORY_ROOT / "Makefile", self.root / "Makefile")
+        source = REPOSITORY_ROOT / "infrastructure" / "commands" / "application.py"
+        destination = self.root / "infrastructure" / "commands"
+        destination.mkdir(parents=True)
+        shutil.copy2(
+            REPOSITORY_ROOT / "infrastructure" / "host-python",
+            destination.parent / "host-python",
+        )
+        (destination.parent / "__init__.py").write_text("")
+        (destination / "__init__.py").write_text("")
+        shutil.copyfile(source, destination / "application.py")
         self.make_environment = {
             name: value
             for (name, value) in os.environ.items()
@@ -32,7 +45,6 @@ class MakeHostContracts(unittest.TestCase):
         self.make_environment["PYTHONDONTWRITEBYTECODE"] = "1"
 
     def test_help_and_dry_run_do_not_parse_application_makefile(self):
-        shutil.copyfile(REPOSITORY_ROOT / "Makefile", self.root / "Makefile")
         (self.root / "project.mk").write_text(
             "PROBE := $(shell touch PARSED_PROJECT_MAKE)\n"
             "app/tests/run: ## Application tests.\n\t@echo actually-ran\n"
@@ -54,13 +66,6 @@ class MakeHostContracts(unittest.TestCase):
                     self.assertIn("app/tests/run", result.stdout)
 
     def test_root_delegation_is_non_overriding_and_performs_real_execution(self):
-        shutil.copyfile(REPOSITORY_ROOT / "Makefile", self.root / "Makefile")
-        source = REPOSITORY_ROOT / "infrastructure" / "commands" / "application.py"
-        destination = self.root / "infrastructure" / "commands"
-        destination.mkdir(parents=True)
-        (destination.parent / "__init__.py").write_text("")
-        (destination / "__init__.py").write_text("")
-        shutil.copyfile(source, destination / "application.py")
         (self.root / "project.mk").write_text(
             ".PHONY: app/tests/run repository/check\n"
             "app/tests/run: ## Run application tests.\n"
@@ -94,8 +99,71 @@ class MakeHostContracts(unittest.TestCase):
         self.assertIn("infrastructure.commands.repository check", common_dry_run.stdout)
         self.assertNotIn("REPLACED COMMON CHECK", common_dry_run.stdout)
 
+    def test_repository_commands_do_not_write_bytecode_on_host(self):
+        """Both repository targets must leave checkout Python source untouched."""
+        source = REPOSITORY_ROOT / "infrastructure"
+        destination = self.root / "infrastructure"
+
+        shutil.copyfile(
+            source / "commands" / "repository.py",
+            destination / "commands" / "repository.py",
+        )
+        shutil.copytree(
+            source / "docker",
+            destination / "docker",
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+        )
+
+        # Make the test sensitive to a missing -B even if the caller has
+        # PYTHONDONTWRITEBYTECODE set in their shell.
+        environment = self.make_environment.copy()
+        environment.pop("PYTHONDONTWRITEBYTECODE", None)
+        environment.pop("PYTHONPYCACHEPREFIX", None)
+
+        for target in ("repository/check", "repository/image/acquire"):
+            with self.subTest(target=target):
+                result = subprocess.run(
+                    ["make", "--no-print-directory", target],
+                    cwd=self.root,
+                    env=environment,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                # Missing Docker context stops the host controller before any
+                # daemon operation, but it imports its real Python modules.
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Specify DOCKER_CONTEXT", result.stderr)
+                self.assertEqual(list(destination.rglob("__pycache__")), [])
+                self.assertEqual(list(destination.rglob("*.pyc")), [])
+
+    def test_host_python_ignores_python_environment_and_never_writes_bytecode(self):
+        environment = self.make_environment.copy()
+        environment.pop("PYTHONDONTWRITEBYTECODE", None)
+        environment["PYTHONPYCACHEPREFIX"] = str(self.root / "pycache")
+        (self.root / "probe_module.py").write_text("ANSWER = 42\n")
+
+        result = subprocess.run(
+            [
+                "./infrastructure/host-python",
+                "-c",
+                "import probe_module, sys; "
+                "print(probe_module.ANSWER, sys.flags.ignore_environment, "
+                "sys.flags.no_site, sys.flags.dont_write_bytecode)",
+            ],
+            cwd=self.root,
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "42 1 1 1")
+        self.assertFalse(list(self.root.rglob("*.pyc")))
+        self.assertFalse(list(self.root.rglob("__pycache__")))
+
     def test_missing_application_makefile_has_actionable_failure(self):
-        shutil.copyfile(REPOSITORY_ROOT / "Makefile", self.root / "Makefile")
         result = subprocess.run(
             ["make", "--no-print-directory", "app/tests/run"],
             cwd=self.root,
