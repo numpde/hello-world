@@ -1,0 +1,4 @@
+#!/bin/sh
+# One host Python entrypoint. Only stdlib modules, no ambient Python settings
+# and no bytecode writes; application workloads remain inside Docker.
+exec python3 -E -S -B "$@"

@@ -5,6 +5,7 @@ dispatch to the confined container operation rather than a host test runner.
 """
 
 import re
+import stat
 import unittest
 from pathlib import Path
 
@@ -34,6 +35,26 @@ class MakeContracts(unittest.TestCase):
         self.assertNotIn("include project.mk", makefile_text)
         self.assertIn("app/%: override export HELLO_WORLD_APP_TARGET = $@", makefile_text)
         self.assertIn("app/%: __app_dispatch_force", makefile_text)
+
+    def test_host_python_wrapper_is_the_only_make_interpreter(self):
+        """Host Make recipes must not bypass the maintained Python policy."""
+        wrapper = ROOT / "infrastructure" / "host-python"
+        self.assertTrue(wrapper.is_file())
+        self.assertTrue(wrapper.stat().st_mode & stat.S_IXUSR)
+
+        # This checks host launch recipes. Python commands selected *inside*
+        # Docker are covered by their own finite-job contracts.
+        direct_python = re.compile(r"(?<![\w./-])(?:python3(?:\.\d+)?|python)(?=\s|$)")
+        self.assertIsNotNone(direct_python.search("@python3 -m module"))
+        self.assertIsNone(direct_python.search("@./infrastructure/host-python -m module"))
+
+        for name in ("Makefile", "project.mk"):
+            makefile = ROOT / name
+            if not makefile.exists():
+                continue
+            for line_number, line in enumerate(makefile.read_text(encoding="utf-8").splitlines(), 1):
+                if line.startswith("\t") and direct_python.search(line):
+                    self.fail(f"{name}:{line_number}: call host Python through infrastructure/host-python")
 
     def test_repository_checks_have_only_one_container_entry_point(self):
         """Keep Make as a dispatcher so tests cannot accidentally acquire a host fallback."""

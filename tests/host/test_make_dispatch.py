@@ -30,6 +30,10 @@ class MakeHostContracts(unittest.TestCase):
         source = REPOSITORY_ROOT / "infrastructure" / "commands" / "application.py"
         destination = self.root / "infrastructure" / "commands"
         destination.mkdir(parents=True)
+        shutil.copy2(
+            REPOSITORY_ROOT / "infrastructure" / "host-python",
+            destination.parent / "host-python",
+        )
         (destination.parent / "__init__.py").write_text("")
         (destination / "__init__.py").write_text("")
         shutil.copyfile(source, destination / "application.py")
@@ -132,6 +136,32 @@ class MakeHostContracts(unittest.TestCase):
                 self.assertIn("Specify DOCKER_CONTEXT", result.stderr)
                 self.assertEqual(list(destination.rglob("__pycache__")), [])
                 self.assertEqual(list(destination.rglob("*.pyc")), [])
+
+    def test_host_python_ignores_python_environment_and_never_writes_bytecode(self):
+        environment = self.make_environment.copy()
+        environment.pop("PYTHONDONTWRITEBYTECODE", None)
+        environment["PYTHONPYCACHEPREFIX"] = str(self.root / "pycache")
+        (self.root / "probe_module.py").write_text("ANSWER = 42\n")
+
+        result = subprocess.run(
+            [
+                "./infrastructure/host-python",
+                "-c",
+                "import probe_module, sys; "
+                "print(probe_module.ANSWER, sys.flags.ignore_environment, "
+                "sys.flags.no_site, sys.flags.dont_write_bytecode)",
+            ],
+            cwd=self.root,
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "42 1 1 1")
+        self.assertFalse(list(self.root.rglob("*.pyc")))
+        self.assertFalse(list(self.root.rglob("__pycache__")))
 
     def test_missing_application_makefile_has_actionable_failure(self):
         result = subprocess.run(
