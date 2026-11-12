@@ -9,6 +9,7 @@ override export HELLO_WORLD_DOCKER_CONTEXT := $(value DOCKER_CONTEXT)
 endif
 
 .PHONY: help repository/check repository/image/acquire
+.PHONY: __app_dispatch_force
 
 help: ## Show commands, effects and next steps without touching Docker.
 	@printf '%s\n' 'Hello World — common infrastructure' '' \
@@ -17,10 +18,24 @@ help: ## Show commands, effects and next steps without touching Docker.
 	  '  make repository/image/acquire DOCKER_CONTEXT=example-rootless' \
 	  '  make repository/check DOCKER_CONTEXT=example-rootless' \
 	  'Acquisition can download images; repository/check stays offline.' ''
-	@awk -F ':[^#]*## ' '/^[a-z][a-z0-9/-]*:.*## / { printf "  %-28s %s\n", $$1, $$2 }' Makefile
+	@awk -F ':[^#]*## ' '/^[a-z][a-z0-9/-]*:.*## / { printf "  %-28s %s\n", $1, $2 }' Makefile
+	@if test -f project.mk; then \
+		printf '%s\n' '' 'Application commands:'; \
+		awk -F ':[^#]*## ' '/^app\/[a-z0-9][a-z0-9_/-]*:.*## / { printf "  %-28s %s\n", $1, $2 }' project.mk; \
+	fi
 
 repository/check: ## Run repository checks offline in a confined Docker container.
 	@python3 -m infrastructure.commands.repository check
 
 repository/image/acquire: ## Explicitly acquire the pinned repository-checker image.
 	@python3 -m infrastructure.commands.repository acquire
+
+# Examples keep their recipes in a separate Make process. Do not include
+# project.mk: it must not be evaluated during common help or dry runs.
+unexport HELLO_WORLD_APP_TARGET
+
+app/%: override export HELLO_WORLD_APP_TARGET = $@
+app/%: __app_dispatch_force
+	@python3 -B -m infrastructure.commands.application
+
+__app_dispatch_force:
