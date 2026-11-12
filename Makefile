@@ -25,10 +25,10 @@ help: ## Show commands, effects and next steps without touching Docker.
 	fi
 
 repository/check: ## Run repository checks offline in a confined Docker container.
-	@python3 -m infrastructure.commands.repository check
+	@python3 -B -m infrastructure.commands.repository check
 
 repository/image/acquire: ## Explicitly acquire the pinned repository-checker image.
-	@python3 -m infrastructure.commands.repository acquire
+	@python3 -B -m infrastructure.commands.repository acquire
 
 repository/make/check: ## Test real Make help, dry runs and app delegation without Docker or network.
 	@python3 -B -m unittest discover -s tests/host -t . -p 'test_*.py' -v
