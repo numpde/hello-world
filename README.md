@@ -1,58 +1,69 @@
-# OpenAPI MCP bridge — standalone application example
+# OpenAPI-to-MCP example (generic external JSON/YAML inputs)
 
-This branch demonstrates an OpenAPI-to-MCP adapter without replacing the
-common Makefile or checker pins. Application commands live in `project.mk`;
-application dependencies live in `pyproject.toml` and a native `uv.lock`.
+This branch adds an OpenAPI-to-MCP application without replacing the root
+Makefile or infrastructure commands. Runtime `--openapi` and `--allowlist`
+files come from the operator, not from a package data directory. The example
+documents API and selection policies exist only in `tests/application/`.
 
-## Runtime inputs
+## Development toolchain: no host uv
 
-The installed application has **no built-in OpenAPI document or exposure
-policy**. Supply your own JSON/YAML files at runtime:
+The application uses the common rootless Docker context selector and owned
+finite-job lifecycle. Pinned Docker images supply Python 3.12 and uv, combined
+by an **offline** Docker build; neither uv nor application dependencies are
+installed into the host Python interpreter.
 
-- `--openapi FILE.json|yaml|yml`: the API's OpenAPI document.
-- `--allowlist FILE.json|yaml|yml`: an object such as
-  `{"operationIds":["listDocuments","getDocument"]}`.
-- `--api-base ORIGIN`: the API server's origin, supplied separately so a
-  captured specification cannot silently redirect requests.
-
-Only operations named in the allowlist are passed to FastMCP. An unknown,
-empty or malformed allowlist fails closed. This selection controls which MCP
-tools exist; it does **not** implement API authentication or replace the
-application's own authorization. HTTP is allowed only for loopback origins;
-other origins require HTTPS. Redirects and inherited proxy settings are off.
-
-The demonstration specification and two allowlists live under
-`tests/application/fixtures/` **only**. The demonstration HTTP server also
-lives under `tests/application/`. None are installed in the wheel or used
-as application defaults.
-
-## Qualification sequence
-
-1. `make help` (read-only), and separately
-   `make repository/check DOCKER_CONTEXT=<local-rootless-context>`.
-2. `make repository/make/check` (real GNU Make tests, no Docker).
-3. `make app/dependencies/acquire` (explicitly networked; generates `uv.lock`).
-4. Review and commit `uv.lock`; then `make app/dependencies/check`.
-5. `make app/dependencies/prepare` (locked, offline).
-6. `make app/tests/run` (external JSON/YAML input tests and real MCP/HTTP tests).
-7. `make app/package/build` (offline wheel and sdist).
-
-To try the example, start `make app/demo/run` in one terminal and run the
-following in another. A real service supplies its own spec and allowlist paths.
+Run in this order on a local rootless Docker context (for example `science`):
 
 ```sh
-APP_API_BASE=http://127.0.0.1:8765 \
-APP_OPENAPI=tests/application/fixtures/documents.openapi.json \
-APP_ALLOWLIST=tests/application/fixtures/read-only.json \
-make app/mcp/run
+make repository/make/check
+make repository/check DOCKER_CONTEXT=science
+make app/toolchain/acquire DOCKER_CONTEXT=science
+make app/toolchain/check DOCKER_CONTEXT=science
+make app/dependencies/lock/update DOCKER_CONTEXT=science
+# Review and commit the generated uv.lock.
+make app/dependencies/acquire DOCKER_CONTEXT=science
+make app/dependencies/check DOCKER_CONTEXT=science
+make app/tests/run DOCKER_CONTEXT=science
+make app/package/build DOCKER_CONTEXT=science
+make app/package/check DOCKER_CONTEXT=science
 ```
 
-Use the `with-create.json` test allowlist only when intentionally testing
-mutation. MCP stdio must contain only MCP protocol messages.
+Acquisition and lock updates are the **only** networked phases. They run
+against the explicitly selected rootless engine and do not expose published
+ports or the Docker socket to the container. The toolchain build, dependency
+checks, application tests, packaging and installed-wheel qualification use
+networkless, confined jobs. Missing prerequisites fail with a next command;
+no test or build automatically acquires packages or changes the lock.
 
-## Qualification gaps
+Application cache, prepared environment and build artifacts live under
+`~/.cache/hello-world/openapi-mcp-bridge/<checkout-id>/`, not the repository.
+`uv.lock` is the only committed application dependency authority. Build
+backends needed for offline packaging are locked in the normal dev group.
+Only `app/dependencies/lock/update` writes the checkout lockfile.
 
-This branch has not acquired or committed `uv.lock`. The installed FastMCP
-runtime, built-wheel execution, and local rootless Docker qualification must
-run where the dependency closure and Docker checker are available. Common
-`repository/check` remains stdlib-only and does not acquire app dependencies.
+## Runtime interface
+
+Install the built wheel into the *consumer's* supported Python environment,
+then invoke the actual package entrypoint:
+
+```sh
+openapi-mcp-bridge --openapi /path/to/api.yaml \
+  --allowlist /path/to/allowed.json --api-base https://api.example.org
+```
+
+The allowlist is JSON or YAML containing an `operationIds` string list, such
+as `{"operationIds":["listDocuments","getDocument"]}`. Tools are exposed
+only when explicitly selected. Unknown operation IDs fail; an empty selection
+is not permitted. API authentication remains an application/client concern.
+HTTP origins must be loopback; remote APIs require HTTPS.
+
+The demo HTTP server is a *test fixture*, not a deployed service or app default.
+`app/package/check` installs the wheel into a fresh virtual environment and
+runs the real application tests **without mounting package source code**.
+
+## Qualification status
+
+The repository and host Make checks previously passed (58 and 3 tests
+respectively). This new dependency workflow needs qualification on a local
+rootless Docker engine. No installer script or host uv prerequisite is used,
+and no lockfile has been fabricated without running the resolver.
