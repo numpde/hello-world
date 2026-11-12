@@ -7,6 +7,12 @@ documents API and selection policies exist only in `tests/application/`.
 
 ## Development toolchain: no host uv
 
+The host invokes Python only through the shared `infrastructure/host-python`
+entrypoint (`-E -S -B`), which ignores ambient Python settings, site packages,
+and bytecode writes. The Docker controller still runs on the host; tests run
+inside Docker. Direct `python3` calls in Make recipes are rejected by the
+repository checker.
+
 The application uses the common rootless Docker context selector and owned
 finite-job lifecycle. Pinned Docker images supply Python 3.12 and uv, combined
 by an **offline** Docker build; neither uv nor application dependencies are

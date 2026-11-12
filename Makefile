@@ -25,13 +25,13 @@ help: ## Show commands, effects and next steps without touching Docker.
 	fi
 
 repository/check: ## Run repository checks offline in a confined Docker container.
-	@python3 -m infrastructure.commands.repository check
+	@./infrastructure/host-python -m infrastructure.commands.repository check
 
 repository/image/acquire: ## Explicitly acquire the pinned repository-checker image.
-	@python3 -m infrastructure.commands.repository acquire
+	@./infrastructure/host-python -m infrastructure.commands.repository acquire
 
 repository/make/check: ## Test real Make help, dry runs and app delegation without Docker or network.
-	@python3 -B -m unittest discover -s tests/host -t . -p 'test_*.py' -v
+	@./infrastructure/host-python -m unittest discover -s tests/host -t . -p 'test_*.py' -v
 
 # Examples keep their recipes in a separate Make process. Do not include
 # project.mk: it must not be evaluated during common help or dry runs.
@@ -39,6 +39,6 @@ unexport HELLO_WORLD_APP_TARGET
 
 app/%: override export HELLO_WORLD_APP_TARGET = $@
 app/%: __app_dispatch_force
-	@python3 -B -m infrastructure.commands.application
+	@./infrastructure/host-python -m infrastructure.commands.application
 
 __app_dispatch_force:
