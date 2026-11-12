@@ -44,7 +44,7 @@ class MakeContracts(unittest.TestCase):
 
         # This checks host launch recipes. Python commands selected *inside*
         # Docker are covered by their own finite-job contracts.
-        direct_python = re.compile(r"(?<![\\w./-])(?:python3(?:\\.\\d+)?|python)(?=\\s|$)")
+        direct_python = re.compile(r"(?<![\w./-])(?:python3(?:\.\d+)?|python)(?=\s|$)")
         self.assertIsNotNone(direct_python.search("@python3 -m module"))
         self.assertIsNone(direct_python.search("@./infrastructure/host-python -m module"))
 
