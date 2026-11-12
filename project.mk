@@ -29,17 +29,18 @@ app/dependencies/prepare: ## Install the locked environment from cache without a
 
 app/tests/run: ## Execute actual application tests using locked, offline dependencies.
 	@test -f uv.lock || { echo 'Missing uv.lock. Next: make -f project.mk app/dependencies/acquire.' >&2; exit 2; }
-	@uv run --locked --offline --no-sync -- python -m unittest discover -s tests/application -p 'test_*.py' -v
+	@uv run --locked --offline -- python -m unittest discover -s tests/application -p 'test_*.py' -v
 
 app/package/build: ## Build an application wheel and sdist without accessing the network.
 	@test -f uv.lock || { echo 'Missing uv.lock. Next: make -f project.mk app/dependencies/acquire.' >&2; exit 2; }
-	@uv build --locked --offline --out-dir dist
+	@uv lock --check --offline
+	@uv build --offline --out-dir dist
 	@printf '%s\n' 'Next: inspect dist/ and verify installation outside the checkout.'
 
 app/mcp/run: ## Run the stdio MCP server; APP_API_BASE must name the intended API.
 	@test -f uv.lock || { echo 'Missing uv.lock. Next: make -f project.mk app/dependencies/acquire.' >&2; exit 2; }
-	@uv run --locked --offline --no-sync -- python -m openapi_mcp_bridge --api-base "$${APP_API_BASE:?Set APP_API_BASE to the API origin}" --policy read-only
+	@uv run --locked --offline -- python -m openapi_mcp_bridge --api-base "$${APP_API_BASE:?Set APP_API_BASE to the API origin}" --policy read-only
 
 app/demo/run: ## Serve the local demonstration REST API on a chosen loopback port.
 	@test -f uv.lock || { echo 'Missing uv.lock. Next: make -f project.mk app/dependencies/acquire.' >&2; exit 2; }
-	@uv run --locked --offline --no-sync -- python -m openapi_mcp_bridge.demo_api
+	@uv run --locked --offline -- python -m openapi_mcp_bridge.demo_api
