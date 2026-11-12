@@ -75,3 +75,27 @@ No step in the common repository/check path automatically acquires third-party
 dependencies. For the first example, application lock generation, installed
 FastMCP execution, wheel/sdist qualification and live rootless Docker checks
 remain separate acceptance requirements until actually executed.
+
+Finite application acquisition jobs (12 November 2026)
+------------------------------------------------------
+
+The generic rootless Docker finite-job runner now permits two explicit,
+opt-in grants for an application acquisition operation: bridge networking
+and writable host-user-owned directory mounts. Normal repository checks
+continue using the original networkless, read-only defaults. Both types
+use the same owned Docker container lifecycle, posture inspection, bounded
+work and cleanup, and retained recovery receipts for uncertain effects.
+No Docker socket or published ports enter an acquisition job. The local
+container user for a writable job is root in the *rootless user namespace*,
+mapped to the invoking host user; no host root process is used.
+
+The common repository input inventory also admits optional app/ and
+containers/ roots for examples, without executing their application code
+during stdlib-only repository checks. Each example still owns its toolchain
+pins, dependency resolver, cache layout, application lock and Make targets.
+This change is generic machinery; no universal dependency resolver or
+second package lock has been introduced.
+
+Implementation branch: infrastructure/application-jobs.
+The application example consumes that branch on example/openapi-mcp-bridge.
+Live rootless Docker integration remains a separate qualification gate.
