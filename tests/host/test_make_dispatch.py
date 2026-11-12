@@ -13,6 +13,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from infrastructure.commands import application
+
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
@@ -22,6 +24,12 @@ class MakeHostContracts(unittest.TestCase):
         self.fixture = tempfile.TemporaryDirectory(prefix="make-host-contract-")
         self.addCleanup(self.fixture.cleanup)
         self.root = Path(self.fixture.name)
+        self.make_environment = {
+            name: value
+            for (name, value) in os.environ.items()
+            if name not in application.INHERITED_MAKE_STATE
+        }
+        self.make_environment["PYTHONDONTWRITEBYTECODE"] = "1"
 
     def test_help_and_dry_run_do_not_parse_application_makefile(self):
         shutil.copyfile(REPOSITORY_ROOT / "Makefile", self.root / "Makefile")
@@ -34,6 +42,7 @@ class MakeHostContracts(unittest.TestCase):
                 result = subprocess.run(
                     ["make", "--no-print-directory", *arguments],
                     cwd=self.root,
+                    env=self.make_environment,
                     capture_output=True,
                     text=True,
                     check=False,
@@ -64,7 +73,7 @@ class MakeHostContracts(unittest.TestCase):
             ["make", "--no-print-directory", "app/tests/run",
              "HELLO_WORLD_APP_TARGET=app/different/run"],
             cwd=self.root,
-            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+            env=self.make_environment,
             capture_output=True,
             text=True,
             check=False,
@@ -76,6 +85,7 @@ class MakeHostContracts(unittest.TestCase):
         common_dry_run = subprocess.run(
             ["make", "--no-print-directory", "-n", "repository/check"],
             cwd=self.root,
+            env=self.make_environment,
             capture_output=True,
             text=True,
             check=False,
@@ -89,6 +99,7 @@ class MakeHostContracts(unittest.TestCase):
         result = subprocess.run(
             ["make", "--no-print-directory", "app/tests/run"],
             cwd=self.root,
+            env=self.make_environment,
             capture_output=True,
             text=True,
             check=False,
