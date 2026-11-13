@@ -110,12 +110,18 @@ def run_job(
     network: bool = False,
     timeout: int = 180,
     environment: tuple[str, ...] = (),
+    temporary_mount: finite_job.TemporaryJobDirectory | None = None,
 ) -> None:
-    result = finite_job.run_container(docker, context, finite_job.Job(
+    job = finite_job.Job(
         image_id=image, command=command, mounts=inputs,
         writable_mounts=outputs, network="bridge" if network else "none",
         timeout=timeout, environment=environment, workdir="/",
-    ))
+    )
+    result = (
+        temporary_mount.run(docker, context, job)
+        if temporary_mount is not None
+        else finite_job.run_container(docker, context, job)
+    )
     if result.output:
         print(result.output, end="" if result.output.endswith("\n") else "\n")
     if result.failure:
@@ -206,12 +212,15 @@ def action(docker: client.DockerClient, context: str, name: str) -> None:
     if name == "dependencies/lock/update":
         if (ROOT / "uv.lock").is_symlink():
             raise client.OperationError("Refusing linked uv.lock; remove the link before updating")
-        with tempfile.TemporaryDirectory(prefix="hello-world-lock-") as temporary:
-            output = Path(temporary)
+        with finite_job.temporary_job_directory(
+            prefix="hello-world-lock-",
+        ) as owned_output:
+            output = owned_output.path
             run_job(docker, context, image, worker("lock"),
                     inputs=input_metadata(False) + (read(ROOT / "app/worker.py", "/worker/worker.py"),),
                     outputs=(write(cache, "/cache"), finite_job.WritableMount(output, "/output")),
-                    network=True, timeout=600, environment=uv_environment())
+                    network=True, timeout=600, environment=uv_environment(),
+                    temporary_mount=owned_output)
             result_lock = output / "uv.lock"
             if not result_lock.is_file() or not result_lock.read_bytes():
                 raise client.OperationError("Dependency resolver returned no uv.lock")
@@ -261,8 +270,11 @@ def action(docker: client.DockerClient, context: str, name: str) -> None:
                 timeout=300)
         return
     if name == "package/build":
-        with tempfile.TemporaryDirectory(prefix="hello-world-package-", dir=state) as temporary:
-            output = Path(temporary)
+        with finite_job.temporary_job_directory(
+            prefix="hello-world-package-",
+            parent=state,
+        ) as owned_output:
+            output = owned_output.path
             run_job(docker, context, image,
                     finite_job.Command("uv", (
                         "build", "--offline", "--no-build-isolation",
@@ -275,7 +287,7 @@ def action(docker: client.DockerClient, context: str, name: str) -> None:
                     ),
                     outputs=(write(cache, "/cache"), finite_job.WritableMount(output, "/output")),
                     environment=uv_environment() + ("UV_CACHE_DIR=/cache", "VIRTUAL_ENV=/environment/.venv"),
-                    timeout=300)
+                    timeout=300, temporary_mount=owned_output)
             if len(list(output.glob("*.whl"))) != 1 or len(list(output.glob("*.tar.gz"))) != 1:
                 raise client.OperationError("Expected exactly one wheel and one source distribution")
             target = state / "dist"
@@ -292,7 +304,10 @@ def action(docker: client.DockerClient, context: str, name: str) -> None:
             raise client.OperationError(
                 "Missing exactly one wheel. Next: make app/package/build DOCKER_CONTEXT=<context>"
             )
-        with tempfile.TemporaryDirectory(prefix="hello-world-installed-", dir=state) as temporary:
+        with finite_job.temporary_job_directory(
+            prefix="hello-world-installed-",
+            parent=state,
+        ) as owned_output:
             run_job(docker, context, image, worker("installed"),
                     inputs=(
                         read(ROOT / "app/worker.py", "/worker/worker.py"),
@@ -300,8 +315,9 @@ def action(docker: client.DockerClient, context: str, name: str) -> None:
                         read(env_dir, "/deps"),
                         read(dist, "/dist"),
                     ),
-                    outputs=(finite_job.WritableMount(Path(temporary), "/output"),),
-                    environment=uv_environment(), timeout=300)
+                    outputs=(finite_job.WritableMount(owned_output.path, "/output"),),
+                    environment=uv_environment(), timeout=300,
+                    temporary_mount=owned_output)
         print("Installed wheel passed application tests without mounting package sources.")
         return
     raise client.OperationError(f"Unsupported application action: {name}")
