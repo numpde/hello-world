@@ -172,10 +172,16 @@ class RepositoryContainerContracts(unittest.TestCase):
             "HTTP_PROXY": "http://untrusted", "HTTPS_PROXY": "http://untrusted",
             "PYTHONPATH": "/untrusted", "AWS_SECRET_ACCESS_KEY": "nope",
         }
-        self.uid_patch = patch.object(docker_client.os, "geteuid", return_value=1000)
+        # The confined checker can run under a UID different from the host
+        # account. Model the owner of this real temporary fixture, not UID 1000.
+        self.uid_patch = patch.object(
+            docker_client.os, "geteuid", return_value=self.root.stat().st_uid,
+        )
         self.uid_patch.start()
         self.addCleanup(self.uid_patch.stop)
-        self.gid_patch = patch.object(docker_client.os, "getegid", return_value=1000)
+        self.gid_patch = patch.object(
+            docker_client.os, "getegid", return_value=self.root.stat().st_gid,
+        )
         self.gid_patch.start()
         self.addCleanup(self.gid_patch.stop)
         self.socket_patch = patch.object(docker_client, "verify_socket")
@@ -507,6 +513,7 @@ class RepositoryContainerContracts(unittest.TestCase):
                 parent=self.root,
             ) as temporary:
                 source = temporary.path
+                self.assertEqual(source.lstat().st_uid, docker_client.os.geteuid())
                 (source / "data").write_text("still mounted")
                 job = finite_job.Job(
                     image_id=repository.CHECKER_IMAGE_ID,
@@ -538,6 +545,7 @@ class RepositoryContainerContracts(unittest.TestCase):
                     mounts=(),
                     writable_mounts=(finite_job.WritableMount(source, "/output"),),
                 )
+                self.assertEqual(source.lstat().st_uid, docker_client.os.geteuid())
                 outcome = temporary.run(selected, "rootless", job)
                 self.assertEqual(outcome.status, 0, outcome.diagnostics)
                 self.assertTrue(source.is_dir())
