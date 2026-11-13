@@ -92,6 +92,20 @@ class TemporaryJobMountContracts(unittest.TestCase):
             self.assertTrue(source.exists())
             self.assertIn(str(source), " ".join(raised.exception.__notes__))
 
+    def test_failed_temp_release_preserves_primary_exception(self):
+        with tempfile.TemporaryDirectory() as parent:
+            with patch.object(finite_job.shutil, "rmtree", side_effect=OSError("remove refused")):
+                with self.assertRaisesRegex(client.OperationError, "original failure") as raised:
+                    with finite_job.temporary_job_directory(
+                        prefix="owned-test-",
+                        parent=Path(parent),
+                    ) as temporary:
+                        source = temporary.path
+                        raise client.OperationError("original failure")
+
+            self.assertTrue(source.exists())
+            self.assertIn("remove refused", " ".join(raised.exception.__notes__))
+
     def test_unused_or_unbound_mount_is_not_retained(self):
         with tempfile.TemporaryDirectory() as parent:
             with finite_job.temporary_job_directory(

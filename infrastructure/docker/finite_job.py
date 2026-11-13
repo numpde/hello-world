@@ -16,6 +16,7 @@ import secrets
 import shutil
 import signal
 import stat
+import sys
 import tempfile
 import threading
 import time
@@ -174,7 +175,15 @@ def temporary_job_directory(
         yield owner
     finally:
         if owner._may_release:
-            shutil.rmtree(path)
+            primary_failure = sys.exception()
+            try:
+                shutil.rmtree(path)
+            except OSError as cleanup_error:
+                if primary_failure is None:
+                    raise
+                primary_failure.add_note(
+                    f"Cannot release temporary mount {path}: {cleanup_error}"
+                )
 
 
 def container_arguments(job: Job, token: str, owner: str) -> list[str]:
