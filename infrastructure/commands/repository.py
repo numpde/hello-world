@@ -26,7 +26,7 @@ CHECKER_IMAGE_ID = "sha256:37ccb536022bb36c4570856b55ebfa85bf07827e3c2fa3eba37f0
 PUBLIC_ROOTS = frozenset({
     "Makefile", "notes", "infrastructure", "tests", ".github",
     ".gitignore", "README.md", "pyproject.toml",
-    "project.mk", "src", "uv.lock",
+    "project.mk", "src", "uv.lock", "app", "containers",
 })
 # Local editor metadata is not source material and must not enter the checker.
 PRIVATE_ROOTS = frozenset({".git", ".agents", ".codex", ".idea", ".vscode", ".aws", ".venv", ".pytest_cache", "__pycache__", ".env", "secrets", "build", "dist"})

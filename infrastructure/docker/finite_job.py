@@ -1,18 +1,20 @@
 """Execute one finite command in a confined Docker container.
 
-The caller supplies an immutable image ID, the executable and literal
-arguments, and read-only inputs. This module fixes the security options,
-checks the created container before starting it, and removes only resources
-whose ownership it can verify. An uncertain create or cleanup leaves a
-private recovery receipt. This is not a service or image-building runner.
+The caller supplies an immutable image ID, literal command and mounts.
+Networkless, read-only jobs are the default. Explicit acquisition jobs can
+select bridge networking and writable output directories without changing
+the repository checker's grants. Confinement is verified before starting;
+uncertain effects retain recovery evidence.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import re
 import secrets
 import signal
+import stat
 import tempfile
 import threading
 import time
@@ -49,10 +51,15 @@ TMPFS_OPTIONS = ("rw", "nosuid", "nodev", "noexec", "size=67108864")
 
 @dataclass(frozen=True)
 class ReadOnlyMount:
-    """A host source made available inside a job without write permission.
+    """A host source made available inside a job without write permission."""
 
-    This finite-job policy does not admit writable host mounts.
-    """
+    source: Path
+    target: str
+
+
+@dataclass(frozen=True)
+class WritableMount:
+    """An existing user-owned directory for explicit output or dependency caches."""
 
     source: Path
     target: str
@@ -73,8 +80,9 @@ class Command:
 class Job:
     """Inputs for one bounded container run.
 
-    Callers select the image, command, read-only mounts and ordinary environment.
-    They cannot add Docker flags that weaken the runner's confinement policy.
+    Default jobs remain networkless and read-only. Acquisition callers may
+    explicitly select bridge networking and writable output/cache directories;
+    no other Docker flags are configurable.
     """
 
     image_id: str
@@ -82,6 +90,9 @@ class Job:
     mounts: tuple[ReadOnlyMount, ...]
     environment: tuple[str, ...] = ()
     workdir: str = "/workspace"
+    writable_mounts: tuple[WritableMount, ...] = ()
+    network: str = "none"
+    timeout: int = WORK_TIMEOUT
 
 
 @dataclass(frozen=True)
@@ -102,12 +113,16 @@ class Outcome:
 def container_arguments(job: Job, token: str, owner: str) -> list[str]:
     """Build the create command from the job's declared inputs.
 
-    Reject ambiguous mount destinations and malformed arguments before touching
-    Docker. Network, privileges, resources and writable storage are fixed here,
-    not selectable through an arbitrary list of Docker flags.
+    Reject ambiguous mount destinations and malformed arguments before Docker.
+    The only optional grants are bridge networking and owner-writable bind
+    directories; privileged settings and resource limits remain fixed.
     """
     if not re.fullmatch(r"sha256:[0-9a-f]{64}", job.image_id):
         raise OperationError(f"Expected sha256 digest for {job.image_id = }")
+    if job.network not in ("none", "bridge"):
+        raise OperationError("Finite jobs admit only none or bridge networking")
+    if type(job.timeout) is not int or not 1 <= job.timeout <= 900:
+        raise OperationError("Job timeout must be between 1 and 900 seconds")
 
     container_entrypoint = job.command.executable
     if not container_entrypoint or (not container_entrypoint.startswith("/") and "/" in container_entrypoint):
@@ -121,7 +136,7 @@ def container_arguments(job: Job, token: str, owner: str) -> list[str]:
     mount_arguments = []
     mounted_targets = set()
 
-    for mount in job.mounts:
+    for mount in (*job.mounts, *job.writable_mounts):
         if not mount.source.is_absolute():
             raise OperationError(f"Expected absolute {mount.source = }")
         if not mount.target.startswith("/"):
@@ -138,7 +153,16 @@ def container_arguments(job: Job, token: str, owner: str) -> list[str]:
             raise OperationError(f"Duplicate {mount.target = }")
 
         mounted_targets.add(mount.target)
-        mount_arguments.extend(["--mount", f"type=bind,source={mount.source},target={mount.target},readonly"])
+        if isinstance(mount, WritableMount):
+            try:
+                metadata = mount.source.lstat()
+            except OSError as error:
+                raise OperationError(f"Cannot inspect writable directory {mount.source}: {error}") from error
+            if not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != os.geteuid():
+                raise OperationError("Writable mount must be an existing, user-owned directory (not a symlink)")
+            mount_arguments.extend(["--mount", f"type=bind,source={mount.source},target={mount.target}"])
+        else:
+            mount_arguments.extend(["--mount", f"type=bind,source={mount.source},target={mount.target},readonly"])
 
     # Environment values may contain credentials. Reject malformed declarations
     # without repeating their contents in diagnostics.
@@ -154,9 +178,12 @@ def container_arguments(job: Job, token: str, owner: str) -> list[str]:
         "--label", f"{OPERATION_LABEL}={token}",
         "--label", f"{IDENTITY_LABEL}={owner}",
 
-        # Workloads never receive host networking or elevated privileges.
-        "--network=none", "--read-only", "--cap-drop=ALL",
-        "--security-opt=no-new-privileges:true", f"--user={CONTAINER_USER}",
+        # Only explicit acquisition jobs can reach the bridge. On the admitted
+        # rootless engine, namespaced UID 0 maps to the invoking host user, so
+        # writable host directories never need world-writable permissions.
+        f"--network={job.network}", "--read-only", "--cap-drop=ALL",
+        "--security-opt=no-new-privileges:true",
+        f"--user={'0:0' if job.writable_mounts else CONTAINER_USER}",
 
         # Limit each job's resource use and give it bounded temporary storage.
         f"--cpus={CPU_LIMIT}", f"--memory={MEMORY_LIMIT_MIB}m",
@@ -210,7 +237,7 @@ def verify_container_posture(
 
     expected_memory_bytes = MEMORY_LIMIT_MIB * 1024 * 1024
     expected_host_configuration = {
-        "NetworkMode": "none",
+        "NetworkMode": job.network,
         "ReadonlyRootfs": True,
         "Privileged": False,
         "NanoCpus": CPU_LIMIT * 1_000_000_000,
@@ -226,8 +253,13 @@ def verify_container_posture(
             confinement_findings.append(f"{host_field = }, {observed_host_value = }, {expected_host_value = }")
 
     observed_user = observed_container_configuration.get("User")
-    if observed_user != CONTAINER_USER:
-        confinement_findings.append(f"{observed_user = }, {CONTAINER_USER = }")
+    expected_user = "0:0" if job.writable_mounts else CONTAINER_USER
+    if observed_user != expected_user:
+        confinement_findings.append(f"{observed_user = }, {expected_user = }")
+    if observed_host_configuration.get("PublishAllPorts") not in (None, False):
+        confinement_findings.append("Unexpected automatic port publication")
+    if observed_host_configuration.get("PortBindings") not in (None, {}):
+        confinement_findings.append("Unexpected published container ports")
 
     observed_dropped_capabilities = observed_host_configuration.get("CapDrop")
     if not isinstance(observed_dropped_capabilities, list) or not any(
@@ -283,7 +315,11 @@ def verify_container_posture(
 
     # Docker may also include --tmpfs /tmp in Mounts. Other mounts, including
     # additional read-only binds, are unrequested grants.
-    expected_bind_mounts = {(str(mount.source), mount.target) for mount in job.mounts}
+    expected_bind_mounts = {
+        (str(mount.source), mount.target, False) for mount in job.mounts
+    } | {
+        (str(mount.source), mount.target, True) for mount in job.writable_mounts
+    }
     observed_bind_mounts = set()
 
     for observed_mount in observed_container_mounts:
@@ -300,11 +336,13 @@ def verify_container_posture(
                 confinement_findings.append(f"Unexpected {observed_mount = }")
             continue
 
-        if observed_mount.get("Type") != "bind" or observed_mount.get("RW") is not False:
-            confinement_findings.append(f"Unexpected writable or non-bind {observed_mount = }")
+        if observed_mount.get("Type") != "bind" or type(observed_mount.get("RW")) is not bool:
+            confinement_findings.append(f"Unexpected mount {observed_mount = }")
             continue
 
-        observed_bind_mounts.add((observed_mount.get("Source"), observed_mount.get("Destination")))
+        observed_bind_mounts.add((
+            observed_mount.get("Source"), observed_mount.get("Destination"), observed_mount["RW"],
+        ))
 
     if observed_bind_mounts != expected_bind_mounts:
         confinement_findings.append(f"Mount inventory differs: {observed_bind_mounts = }, {expected_bind_mounts = }")
@@ -480,7 +518,7 @@ def run_container(docker: DockerClient, context: str, job: Job) -> Outcome:
     operation_token = secrets.token_hex(16)
     owner_token = secrets.token_hex(16)
     docker_create_arguments = container_arguments(job=job, token=operation_token, owner=owner_token)
-    work_deadline = time.monotonic() + WORK_TIMEOUT
+    work_deadline = time.monotonic() + job.timeout
 
     def remaining_work_timeout(maximum_timeout: int = CLIENT_TIMEOUT) -> int:
         """Bound each Docker request by the time left for the complete work phase."""
@@ -552,7 +590,7 @@ def run_container(docker: DockerClient, context: str, job: Job) -> Outcome:
         verify_container_posture(docker, container_id, job, timeout=remaining_work_timeout)
 
         docker_attachment_result = docker.call(
-            "start", "--attach", container_id, timeout=remaining_work_timeout(WORK_TIMEOUT)
+            "start", "--attach", container_id, timeout=remaining_work_timeout(job.timeout)
         )
         job_output = docker_attachment_result.output
         if docker_attachment_result.truncated:
