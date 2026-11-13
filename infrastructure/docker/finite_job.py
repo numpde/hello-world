@@ -13,14 +13,16 @@ import json
 import os
 import re
 import secrets
+import shutil
 import signal
 import stat
+import sys
 import tempfile
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from infrastructure.docker.client import (
@@ -108,6 +110,80 @@ class Outcome:
     failure: str | None
     diagnostics: tuple[str, ...]
     recovery: Path | None
+
+
+@dataclass
+class TemporaryJobDirectory:
+    """A private mount source held until its one finite job is retired.
+
+    Call run() inside temporary_job_directory(). A failed workload with
+    confirmed retirement releases the directory; uncertain retirement
+    retains its contents alongside the container recovery evidence.
+    """
+
+    path: Path
+    _used: bool = False
+    _may_release: bool = True
+
+    def run(self, docker: DockerClient, context: str, job: Job) -> Outcome:
+        """Execute one job mounting this directory and observe its retirement."""
+        if self._used:
+            raise OperationError("Temporary directory already ran a finite job")
+        if not any(
+            mount.source == self.path
+            for mount in (*job.mounts, *job.writable_mounts)
+        ):
+            raise OperationError("Finite job does not mount its owned temporary directory")
+
+        self._used = True
+        self._may_release = False
+        try:
+            outcome = run_container(docker, context, job)
+        except BaseException as error:
+            # An unexpected runner exception cannot establish daemon retirement.
+            error.add_note(f"Retained temporary mount: {self.path}")
+            raise
+
+        self._may_release = outcome.recovery is None
+        if self._may_release:
+            return outcome
+
+        retained_mount = f"Retained temporary mount: {self.path}"
+        diagnostics = [retained_mount]
+        try:
+            with (outcome.recovery / "recovery.txt").open("a", encoding="utf-8") as receipt:
+                receipt.write(retained_mount + "\n")
+        except OSError as error:
+            diagnostics.append(f"Cannot update mount recovery record: {error}")
+
+        return replace(outcome, diagnostics=outcome.diagnostics + tuple(diagnostics))
+
+
+@contextmanager
+def temporary_job_directory(
+    prefix: str,
+    parent: Path | None = None,
+) -> Iterator[TemporaryJobDirectory]:
+    """Create one private mount source and release it only after safe retirement.
+
+    Processing the output stays inside this context. Directories retained for
+    recovery are not deleted by the context manager when an exception unwinds.
+    """
+    path = Path(tempfile.mkdtemp(prefix=prefix, dir=parent))
+    owner = TemporaryJobDirectory(path)
+    try:
+        yield owner
+    finally:
+        if owner._may_release:
+            primary_failure = sys.exception()
+            try:
+                shutil.rmtree(path)
+            except OSError as cleanup_error:
+                if primary_failure is None:
+                    raise
+                primary_failure.add_note(
+                    f"Cannot release temporary mount {path}: {cleanup_error}"
+                )
 
 
 def container_arguments(job: Job, token: str, owner: str) -> list[str]:

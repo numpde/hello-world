@@ -72,9 +72,9 @@ entries still fail admission. Other language ecosystems should extend the
 public input list only when a concrete example requires new paths.
 
 No step in the common repository/check path automatically acquires third-party
-dependencies. For the first example, application lock generation, installed
-FastMCP execution, wheel/sdist qualification and live rootless Docker checks
-remain separate acceptance requirements until actually executed.
+dependencies. Each example owns its separately locked application execution,
+installed-artifact tests and live qualification; these are not prerequisites
+for running common repository checks.
 
 Finite application acquisition jobs (12 November 2026)
 ------------------------------------------------------
@@ -96,6 +96,9 @@ pins, dependency resolver, cache layout, application lock and Make targets.
 This change is generic machinery; no universal dependency resolver or
 second package lock has been introduced.
 
-Implementation branch: infrastructure/application-jobs.
-The application example consumes that branch on example/openapi-mcp-bridge.
-Live rootless Docker integration remains a separate qualification gate.
+These generic mechanisms are maintained on main, while dependency-toolchain
+configuration remains on example branches. The original exercised consumer was
+example/openapi-mcp-bridge at dfeb3314 (qualified before promotion). A change
+to the common runner still requires independent mainline qualification on the
+selected rootless Docker engine; application test results alone are not proof
+of that independent qualification.

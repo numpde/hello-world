@@ -55,6 +55,7 @@ class FakeExecutor:
         self.bad_exit_state = False
         self.host_configuration_overrides = {}
         self.container_mounts = []
+        self.container_user = "65532:65532"
         self.observed_additional_mounts = []
         self.workload_output = "Ran 17 tests in 0.12s\n\nOK\n"
         self.engine_information = FAKE_ENGINE_INFORMATION.copy()
@@ -90,9 +91,10 @@ class FakeExecutor:
             )
             container_id_receipt.write_text(FAKE_CONTAINER_ID + "\n", encoding="ascii")
             self.container_present = True
+            self.container_user = "0:0" if "--user=0:0" in docker_arguments else "65532:65532"
             self.container_mounts = [
                 {
-                    "Type": "bind", "RW": False,
+                    "Type": "bind", "RW": not mount_declaration.endswith(",readonly"),
                     "Source": mount_declaration.split("source=", 1)[1].split(",target=", 1)[0],
                     "Destination": mount_declaration.split("target=", 1)[1].split(",readonly", 1)[0],
                 }
@@ -123,7 +125,7 @@ class FakeExecutor:
             host_configuration.update(self.host_configuration_overrides)
             return docker_client.Result(0, json.dumps({
                 "Id": FAKE_CONTAINER_ID, "Image": self.reported_image_id,
-                "Config": {"Labels": container_labels, "User": "65532:65532"},
+                "Config": {"Labels": container_labels, "User": self.container_user},
                 "HostConfig": host_configuration,
                 "Mounts": [*self.container_mounts, *self.observed_additional_mounts],
             }))
@@ -495,6 +497,53 @@ class RepositoryContainerContracts(unittest.TestCase):
         self.assertIn("Refusing to remove", errors)
         path = Path(errors.split("Retained recovery record: ", 1)[1].splitlines()[0])
         self.addCleanup(shutil.rmtree, path.parent)
+
+    def test_owned_temporary_mount_survives_real_lifecycle_removal_refusal(self):
+        """The owner retains its bind source after actual run_container cleanup fails."""
+        self.executor.failed_removal = True
+        with docker_client.docker_client(self.environment, self.executor) as selected:
+            with finite_job.temporary_job_directory(
+                prefix="bound-work-",
+                parent=self.root,
+            ) as temporary:
+                source = temporary.path
+                (source / "data").write_text("still mounted")
+                job = finite_job.Job(
+                    image_id=repository.CHECKER_IMAGE_ID,
+                    command=finite_job.Command("true"),
+                    mounts=(),
+                    writable_mounts=(finite_job.WritableMount(source, "/output"),),
+                )
+                outcome = temporary.run(selected, "rootless", job)
+
+        self.assertEqual(outcome.status, 1)
+        self.assertTrue(self.executor.container_present)
+        self.assertTrue(source.is_dir())
+        self.assertEqual((source / "data").read_text(), "still mounted")
+        self.assertIsNotNone(outcome.recovery)
+        self.assertIn(str(source), (outcome.recovery / "recovery.txt").read_text())
+        self.addCleanup(shutil.rmtree, outcome.recovery)
+
+    def test_owned_temporary_mount_is_removed_after_real_lifecycle_retirement(self):
+        """The same owner releases its directory after verified Docker removal."""
+        with docker_client.docker_client(self.environment, self.executor) as selected:
+            with finite_job.temporary_job_directory(
+                prefix="bound-work-",
+                parent=self.root,
+            ) as temporary:
+                source = temporary.path
+                job = finite_job.Job(
+                    image_id=repository.CHECKER_IMAGE_ID,
+                    command=finite_job.Command("true"),
+                    mounts=(),
+                    writable_mounts=(finite_job.WritableMount(source, "/output"),),
+                )
+                outcome = temporary.run(selected, "rootless", job)
+                self.assertEqual(outcome.status, 0, outcome.diagnostics)
+                self.assertTrue(source.is_dir())
+
+        self.assertFalse(self.executor.container_present)
+        self.assertFalse(source.exists())
 
     def test_parallel_test_command_is_an_adapter_choice(self):
         """Switching to unittest-parallel must change only the job command, not its container grants."""
