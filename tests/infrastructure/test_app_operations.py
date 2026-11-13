@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import tempfile
 import unittest
@@ -143,6 +145,53 @@ class ApplicationOperationsContracts(unittest.TestCase):
                          {"/worker/worker.py", "/testroot/tests", "/deps", "/dist"})
         self.assertEqual([mount.target for mount in seen[0]["outputs"]], ["/output"])
         self.assertTrue((self.root / ".idea/private.xml").is_file())
+
+    def test_all_temporary_docker_mounts_survive_unconfirmed_removal(self):
+        """An application failure must not release mounted work held by Docker."""
+        environment = self.prepared()
+        dist = self.state / "dist"
+        dist.mkdir()
+        (dist / "example-0.1.0-py3-none-any.whl").write_bytes(b"wheel")
+        recovery = self.state / "operation"
+        recovery.mkdir()
+        receipt = recovery / "recovery.txt"
+        receipt.write_text("Owned container still present\n")
+
+        for action in ("dependencies/lock/update", "package/build", "package/check"):
+            with self.subTest(action=action):
+                observed = []
+
+                def removal_refused(_docker, _context, job):
+                    outputs = [mount.source for mount in job.writable_mounts if mount.target == "/output"]
+                    self.assertEqual(len(outputs), 1)
+                    output = outputs[0]
+                    self.assertTrue(output.is_dir())
+                    (output / "artifact").write_text("still in use")
+                    observed.append(output)
+                    return finite_job.Outcome(
+                        status=1,
+                        output="",
+                        failure="Docker refused container removal",
+                        diagnostics=("CLEANUP UNCONFIRMED",),
+                        recovery=recovery,
+                    )
+
+                stderr = io.StringIO()
+                with (
+                    patch.object(app, "qualify_dependencies", return_value=environment),
+                    patch.object(finite_job, "run_container", side_effect=removal_refused) as run,
+                    contextlib.redirect_stderr(stderr),
+                    self.assertRaisesRegex(client.OperationError, "Application container"),
+                ):
+                    app.action(object(), "generic", action)
+
+                run.assert_called_once()
+                self.assertEqual(len(observed), 1)
+                output = observed[0]
+                self.assertTrue(output.is_dir())
+                self.assertEqual((output / "artifact").read_text(), "still in use")
+                self.assertIn(str(output), stderr.getvalue())
+                self.assertIn(str(output), receipt.read_text())
 
     def test_toolchain_check_does_not_pull_or_build(self):
         commands = []
