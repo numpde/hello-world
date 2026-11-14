@@ -27,6 +27,7 @@ PUBLIC_ROOTS = frozenset({
     "Makefile", "notes", "infrastructure", "tests", ".github",
     ".gitignore", "README.md", "pyproject.toml",
     "project.mk", "src", "uv.lock", "app", "containers",
+    "package.json", "package-lock.json",
 })
 # Local editor metadata is not source material and must not enter the checker.
 PRIVATE_ROOTS = frozenset({".git", ".agents", ".codex", ".idea", ".vscode", ".aws", ".venv", ".pytest_cache", "__pycache__", ".env", "secrets", "build", "dist"})

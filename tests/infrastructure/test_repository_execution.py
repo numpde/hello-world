@@ -700,6 +700,8 @@ class RepositoryContainerContracts(unittest.TestCase):
         """Application commands, source and native lock can enter the checker without editor files."""
         (self.root / "project.mk").write_text("app/tests/run:\n\t@echo tests\n")
         (self.root / "uv.lock").write_text("version = 1\n")
+        (self.root / "package.json").write_text('{"name":"node-example"}\n')
+        (self.root / "package-lock.json").write_text('{"lockfileVersion":3}\n')
         (self.root / "src").mkdir()
         (self.root / "src" / "module.py").write_text("x = 1\n")
         (self.root / ".idea").mkdir()
@@ -710,7 +712,8 @@ class RepositoryContainerContracts(unittest.TestCase):
         self.assertEqual(status, 0, errors)
         self.assertEqual(
             {mount.source.name for mount in repository.public_mounts(self.root)},
-            {"Makefile", "infrastructure", "tests", "project.mk", "uv.lock", "src"},
+            {"Makefile", "infrastructure", "tests", "project.mk", "uv.lock", "src",
+             "package.json", "package-lock.json"},
         )
         self.assertFalse(self.executor.container_present)
 
