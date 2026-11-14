@@ -30,7 +30,8 @@ function installed() {
   if (!existsSync(module)) throw Error('The installed package is missing its proxy entrypoint');
   execFileSync(process.execPath, ['--test', '/tests/application/proxy.test.mjs'], {
     stdio: 'inherit', timeout: 180000,
-    env: {...process.env, PROXY_MODULE: module, HOME: '/tmp'},
+    env: {...process.env, PROXY_MODULE: module,
+      PROXY_ENTRY: '/output/node_modules/.bin/hello-world-https-egress-proxy', HOME: '/tmp'},
   });
 }
 

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import net from 'node:net';
+import {spawn} from 'node:child_process';
 import {once} from 'node:events';
 import {test} from 'node:test';
 import {pathToFileURL} from 'node:url';
@@ -178,4 +179,33 @@ test('CONNECT preserves a response after the client half-closes its write side',
   });
   await completed;
   assert.ok(reply.includes('upstream-replied:hello-after-CONNECT'), reply);
+});
+
+
+test('installed bin starts the proxy, answers health, and shuts down', async () => {
+  const entry = process.env.PROXY_ENTRY ?? new URL('../../src/https_egress_proxy.mjs', import.meta.url).pathname;
+  const reserved = net.createServer();
+  const port = await listening(reserved);
+  await new Promise(resolve => reserved.close(resolve));
+  const child = spawn(entry, [], {
+    env: {...process.env, PROXY_ALLOWED_HOSTS: 'registry.npmjs.org', PROXY_PORT: String(port)},
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  const exited = once(child, 'exit');
+  let stderr = '';
+  child.stderr.on('data', chunk => { stderr += chunk; });
+  try {
+    await Promise.race([
+      once(child.stdout, 'data'),
+      new Promise((_, reject) => {
+        setTimeout(() => reject(Error('proxy did not become ready')), 3000).unref();
+      }),
+    ]);
+    assert.equal((await response(port)).status, 204);
+  } finally {
+    child.kill('SIGTERM');
+    const [status] = await exited;
+    assert.equal(status, 0, stderr);
+  }
+  await assert.rejects(response(port), /ECONNREFUSED/);
 });

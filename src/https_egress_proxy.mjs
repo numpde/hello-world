@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /** A small, fixed-destination acquisition proxy. No third-party dependencies. */
 import dns from 'node:dns/promises';
+import {realpathSync} from 'node:fs';
 import http from 'node:http';
 import net from 'node:net';
 import {pathToFileURL} from 'node:url';
@@ -250,7 +251,7 @@ async function main() {
   process.on('SIGINT', () => { server.stop().catch(() => { process.exitCode = 1; }); });
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
   main().catch(error => {
     process.stderr.write('Proxy startup failed: ' + error.message + '\n');
     process.exitCode = 1;
