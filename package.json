@@ -1,0 +1,10 @@
+{
+  "name": "hello-world-https-egress-proxy",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Explicit-destination HTTP and HTTPS CONNECT acquisition proxy",
+  "engines": {"node": ">=22"},
+  "bin": {"hello-world-https-egress-proxy": "src/https_egress_proxy.mjs"},
+  "files": ["src/https_egress_proxy.mjs"],
+  "scripts": {"test": "node --test tests/application/proxy.test.mjs"}
+}
