@@ -62,8 +62,16 @@ class NodeProxyOperationsContracts(unittest.TestCase):
 
     def test_lock_check_uses_a_private_mounted_copy_and_offline_npm(self):
         observed = []
-        with patch.object(finite_job, "run_container",
-                          side_effect=lambda _docker, _context, job: observed.append(job) or SUCCESS):
+
+        def check_manifest_permissions(_docker, _context, job):
+            staged = next(m.source for m in job.mounts if m.target == "/stage")
+            self.assertTrue(staged.stat().st_mode & 0o005 == 0o005)
+            for filename in ("package.json", "package-lock.json"):
+                self.assertTrue((staged / filename).stat().st_mode & 0o004)
+            observed.append(job)
+            return SUCCESS
+
+        with patch.object(finite_job, "run_container", side_effect=check_manifest_permissions):
             app.action(self.docker, "generic", "dependencies/check")
         self.assertEqual(len(observed), 1)
         self.assertEqual(observed[0].network, "none")

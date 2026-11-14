@@ -106,7 +106,12 @@ def action(docker: client.DockerClient, context: str, name: str) -> None:
     if name == "dependencies/check":
         with finite_job.temporary_job_directory(prefix="node-lock-", parent=state) as owned:
             for filename in ("package.json", "package-lock.json"):
-                shutil.copyfile(ROOT / filename, owned.path / filename)
+                copied = owned.path / filename
+                shutil.copyfile(ROOT / filename, copied)
+                copied.chmod(0o644)
+            # The checker runs as unprivileged 65532, unlike jobs with an
+            # explicitly writable mount. These are public npm manifests.
+            owned.path.chmod(0o755)
             run_job(
                 docker, context, image,
                 finite_job.Command("node", ("/worker/worker.mjs", "dependencies")),
