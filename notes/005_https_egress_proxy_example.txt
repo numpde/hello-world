@@ -1,0 +1,47 @@
+Hello World: HTTPS egress proxy example
+=====================================
+
+Second maintained example: example/https-egress-proxy.
+
+Purpose
+-------
+A Node.js HTTP/HTTPS acquisition proxy, synthesized from the fixed-destination
+and bounded-relay patterns in dapp32, nmr-gui-v1, container-tools and
+pay-to-play. The proxy implements GET/HEAD for absolute-form HTTP URLs and
+CONNECT for HTTPS port 443. It requires an exact destination-host allowlist,
+rejects private/reserved IPv4 DNS results, filters proxy credentials and
+hop-by-hop headers, and exposes GET /healthz. There are no runtime npm packages.
+
+Boundaries
+----------
+main owns host-python, Docker context selection, finite-job grants, temporary
+mount lifetime and recovery. This example owns Node source, its native npm
+lockfile, package tests and project.mk.
+
+Image acquisition is the only networked preparation step. Every application
+check, package build and installed-artifact test is a network-none finite job.
+The source-free package check installs the generated .tgz into a fresh writable
+directory and tests the installed module, not the checkout source.
+
+Commands, on a host with a selected local rootless Docker context:
+
+    make app/image/acquire DOCKER_CONTEXT=generic
+    make app/image/check DOCKER_CONTEXT=generic
+    make repository/make/check
+    make repository/check DOCKER_CONTEXT=generic
+    make app/dependencies/check DOCKER_CONTEXT=generic
+    make app/tests/run DOCKER_CONTEXT=generic
+    make app/package/build DOCKER_CONTEXT=generic
+    make app/package/check DOCKER_CONTEXT=generic
+
+A consumer with Node >=22 may install the tarball and start its bin with
+PROXY_ALLOWED_HOSTS=registry.npmjs.org and optional PROXY_HOST (127.0.0.1
+by default) and PROXY_PORT (8080 by default). Bind 0.0.0.0 only within an
+explicitly isolated network. This application is not itself a Docker service
+supervisor or a production ingress deployment.
+
+Qualification
+-------------
+The source and freshly installed npm tarball each passed nine local Node 22
+socket tests. Contained tests and packaging on DOCKER_CONTEXT=generic remain
+to be qualified. Local success is not evidence of rootless-engine behaviour.
