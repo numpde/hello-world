@@ -42,6 +42,7 @@ supervisor or a production ingress deployment.
 
 Qualification
 -------------
-The source and freshly installed npm tarball each passed nine local Node 22
-socket tests. Contained tests and packaging on DOCKER_CONTEXT=generic remain
+The source and freshly installed npm tarball each passed ten local Node 22
+socket tests, including installed bin startup and SIGTERM. Contained tests
+and packaging on DOCKER_CONTEXT=generic remain
 to be qualified. Local success is not evidence of rootless-engine behaviour.
