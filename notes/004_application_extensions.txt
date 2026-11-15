@@ -102,3 +102,59 @@ example/openapi-mcp-bridge at dfeb3314 (qualified before promotion). A change
 to the common runner still requires independent mainline qualification on the
 selected rootless Docker engine; application test results alone are not proof
 of that independent qualification.
+
+
+Application qualification separation (15 November 2026)
+------------------------------------------------------
+
+Two maintained application branches demonstrate the same shared finite-job
+owner while retaining their native Python and Node package operations.
+
+Shared facilities now maintained on main:
+- infrastructure/commands/job_execution.py emits finite-job work and cleanup
+  evidence in a consistent order and propagates failure.
+- finite_job.read_only_mount admits a regular file or directory as an
+  application-selected input. The application still chooses targets and grants.
+- repository/application/check runs tests/application_ops in the existing
+  offline, unprivileged, digest-pinned Python checker, separately from common
+  infrastructure tests. The example's application code may be stdlib-only for
+  this lane; native package tests belong to app/tests/run.
+- repository/application/make/check runs optional tests/application_host
+  through host-python with GNU Make, never inside the minimal checker image.
+
+This separation prevents application code from entering the generic
+repository/check discovery path. The former tests/infrastructure app modules
+and the OpenAPI-only tests/host method move to application-owned roots.
+
+Exact-SHA cross-example compatibility
+------------------------------------
+
+The reviewed examples/catalog.toml lists names and branch refs, not mutable
+source copies or executable commands. The integration executor reads the
+catalog from the selected main commit, compares each example's changes since
+the merge base against the application-owned path policy, and refuses common
+infrastructure overrides.
+
+After an explicit git fetch (no implicit network acquisition), use:
+
+    make examples/plan BASE=<40-character-main-SHA>
+    make examples/check BASE=<40-character-main-SHA> DOCKER_CONTEXT=generic
+
+EXAMPLE=<catalog-name> narrows selection. EXAMPLE_HEAD=<40-character-example-SHA>
+selects a proposed example revision and requires EXAMPLE. Without EXAMPLE,
+all cataloged example refs are resolved to exact locally fetched commits.
+
+Planning makes no worktree, Docker or network changes. Checking merges each
+example with the selected main revision in an owned disposable worktree and
+executes the ordinary repository/make/check, repository/check,
+repository/application/make/check and repository/application/check targets.
+A confirmed successful worktree is removed. A failure retains its checkout
+and records both SHAs and the combined tree identity; independent examples
+are still checked where safe. No failure triggers a global Docker prune.
+
+These are **compatibility gates**, not full native-package acceptance gates.
+Actual dependency acquisition, installed-wheel or installed-tarball checks,
+and any live service deployment remain example-owned. They must be qualified
+separately on the explicitly selected rootless Docker engine. The bounded
+host-only CI lane can prove Make and local Git behavior, not rootless Docker
+confinement.

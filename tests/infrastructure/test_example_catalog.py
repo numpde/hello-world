@@ -45,6 +45,32 @@ class ExampleCatalogContracts(unittest.TestCase):
                     with self.assertRaises(examples.IntegrationError):
                         examples.load_catalog(path)
 
+    def test_nested_make_checks_discard_inherited_parser_state(self):
+        """A parent make invocation cannot silently affect nested check parsing."""
+        import os
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        inherited = {
+            "MAKEFLAGS": "-n",
+            "MAKEFILES": "/tmp/untrusted.mk",
+            "GNUMAKEFLAGS": "--dry-run",
+            "MAKEOVERRIDES": "other=value",
+        }
+        with (
+            patch.dict(os.environ, inherited),
+            patch.object(examples.subprocess, "run",
+                         return_value=SimpleNamespace(returncode=0)) as invoked,
+        ):
+            examples._run_checks(Path("/tmp/disposable"), "generic")
+
+        self.assertEqual(invoked.call_count, len(examples.CHECK_TARGETS))
+        for call in invoked.call_args_list:
+            environment = call.kwargs["env"]
+            self.assertFalse(any(name in environment for name in inherited))
+            self.assertTrue(any(argument == "DOCKER_CONTEXT=generic" for argument in call.args[0]))
+            self.assertIn("-C", call.args[0])
+
     def test_application_paths_admitted_but_common_owned_paths_rejected(self):
         examples.admit_example_paths((
             "app/operations.py",

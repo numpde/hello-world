@@ -8,7 +8,7 @@ ifeq ($(origin DOCKER_CONTEXT),command line)
 override export HELLO_WORLD_DOCKER_CONTEXT := $(value DOCKER_CONTEXT)
 endif
 
-.PHONY: help repository/check repository/image/acquire repository/make/check repository/application/check repository/application/make/check examples/check
+.PHONY: help repository/check repository/image/acquire repository/make/check repository/application/check repository/application/make/check examples/check examples/plan
 .PHONY: __app_dispatch_force
 
 help: ## Show commands, effects and next steps without touching Docker.
@@ -40,7 +40,10 @@ repository/application/make/check: ## Test application-only Make behavior withou
 	@./infrastructure/host-python -m unittest discover -s tests/application_host -t . -p 'test_*.py' -v
 
 examples/check: ## Integrate exact main/example commits and run offline compatibility gates.
-	@./infrastructure/host-python -m infrastructure.commands.example_integrations
+	@./infrastructure/host-python -m infrastructure.commands.example_integrations check
+
+examples/plan: ## Resolve exact example revisions and ownership without Docker or network.
+	@./infrastructure/host-python -m infrastructure.commands.example_integrations plan
 
 # Examples keep their recipes in a separate Make process. Do not include
 # project.mk: it must not be evaluated during common help or dry runs.
