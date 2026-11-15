@@ -186,6 +186,23 @@ class MakeHostContracts(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("Ran 1 test", result.stderr)
 
+    def test_empty_application_host_contracts_are_not_a_success(self):
+        """An app-only qualification target must not silently accept zero tests."""
+        selected = self.root / "tests" / "application_host"
+        selected.mkdir(parents=True)
+        (self.root / "tests" / "__init__.py").write_text("")
+        (selected / "__init__.py").write_text("")
+        result = subprocess.run(
+            ["make", "--no-print-directory", "repository/application/make/check"],
+            cwd=self.root,
+            env=self.make_environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("NO TESTS RAN", result.stdout + result.stderr)
+
     def test_missing_application_makefile_has_actionable_failure(self):
         result = subprocess.run(
             ["make", "--no-print-directory", "app/tests/run"],
