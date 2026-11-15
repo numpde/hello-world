@@ -65,6 +65,9 @@ class GitIntegrationContracts(unittest.TestCase):
 
     def test_disposable_merge_checks_combined_checkout_and_retires_it(self):
         plan, = examples.plan(self.root, base=self.base, selected="small-app")
+        # The temporary merge must never depend on operator Git identity.
+        self.git("config", "--unset", "user.name")
+        self.git("config", "--unset", "user.email")
         seen = []
 
         def check(checkout, _context):
