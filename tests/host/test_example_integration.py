@@ -53,6 +53,36 @@ class GitIntegrationContracts(unittest.TestCase):
         self.assertEqual(self.git("rev-parse", "example/small-app").strip(), self.example)
         self.assertEqual(len(list((self.root / "app").glob("*"))) if (self.root / "app").exists() else 0, 0)
 
+    def test_plan_reads_the_catalog_from_selected_main_commit(self):
+        """A dirty local catalog must not rebind a captured qualification input."""
+        (self.root / "examples" / "catalog.toml").write_text(
+            '[[examples]]\nname = "changed"\nbranch = "example/changed"\n'
+        )
+        plan, = examples.plan(self.root, base=self.base, selected="small-app")
+        self.assertEqual(plan.example, self.example)
+
+    def test_plan_mode_needs_no_docker_context(self):
+        """Planning is a read-only local Git operation."""
+        import contextlib
+        import io
+        import os
+        from unittest.mock import patch
+
+        environment = dict(os.environ)
+        environment["HELLO_WORLD_EXAMPLE_BASE"] = self.base
+        environment["HELLO_WORLD_EXAMPLE"] = "small-app"
+        environment.pop("HELLO_WORLD_DOCKER_CONTEXT", None)
+        output = io.StringIO()
+        with (
+            patch.object(examples, "ROOT", self.root),
+            patch.dict(os.environ, environment, clear=True),
+            contextlib.redirect_stdout(output),
+        ):
+            self.assertEqual(examples.main(["plan"]), 0)
+        self.assertIn(self.base, output.getvalue())
+        self.assertIn(self.example, output.getvalue())
+        self.assertFalse((self.root / "app").exists())
+
     def test_common_owned_application_change_is_refused_before_worktree(self):
         self.git("switch", "-q", "example/small-app")
         (self.root / "Makefile").write_text("help:\n\t@echo override\n")
