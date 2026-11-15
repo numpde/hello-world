@@ -234,6 +234,32 @@ class RepositoryContainerContracts(unittest.TestCase):
         self.assertTrue(all(argv[0] == "docker" for argv in arguments))
         self.assertNotIn("Retained", errors)
 
+    def test_application_operation_contracts_have_a_separate_contained_target(self):
+        """A native application adapter is tested without extending common discovery."""
+        (self.root / "project.mk").write_text("app/tests/run:\n\t@echo fixture\n")
+        application_tests = self.root / "tests" / "application_ops"
+        application_tests.mkdir()
+        (application_tests / "__init__.py").write_text("")
+        (application_tests / "test_adapter.py").write_text("import unittest\n")
+        status, output, errors = self.execute("application-check")
+        self.assertEqual(status, 0, errors)
+        self.assertIn("17 tests", output)
+        create = next(argv for argv, _, _ in self.executor.docker_calls if "create" in argv)
+        self.assertIn("tests/application_ops", create)
+        self.assertNotIn("tests/infrastructure", create)
+        self.assertFalse(self.executor.container_present)
+
+    def test_application_operation_check_requires_a_real_application_suite(self):
+        """Main without an application fails clearly before Docker acquisition."""
+        with self.assertRaisesRegex(docker_client.OperationError, "project.mk"):
+            self.execute("application-check")
+        self.assertEqual(self.executor.docker_calls, [])
+
+        (self.root / "project.mk").write_text("app/tests/run:\n\t@echo fixture\n")
+        with self.assertRaisesRegex(docker_client.OperationError, "application_ops"):
+            self.execute("application-check")
+        self.assertEqual(self.executor.docker_calls, [])
+
     def test_failed_tests_fail_and_are_removed(self):
         """A nonzero container exit is the authoritative failure even when attachment succeeds."""
         self.executor.workload_exit_status = 1
