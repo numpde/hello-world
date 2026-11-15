@@ -53,6 +53,36 @@ class GitIntegrationContracts(unittest.TestCase):
         self.assertEqual(self.git("rev-parse", "example/small-app").strip(), self.example)
         self.assertEqual(len(list((self.root / "app").glob("*"))) if (self.root / "app").exists() else 0, 0)
 
+    def test_plan_reads_the_catalog_from_selected_main_commit(self):
+        """A dirty local catalog must not rebind a captured qualification input."""
+        (self.root / "examples" / "catalog.toml").write_text(
+            '[[examples]]\nname = "changed"\nbranch = "example/changed"\n'
+        )
+        plan, = examples.plan(self.root, base=self.base, selected="small-app")
+        self.assertEqual(plan.example, self.example)
+
+    def test_plan_mode_needs_no_docker_context(self):
+        """Planning is a read-only local Git operation."""
+        import contextlib
+        import io
+        import os
+        from unittest.mock import patch
+
+        environment = dict(os.environ)
+        environment["HELLO_WORLD_EXAMPLE_BASE"] = self.base
+        environment["HELLO_WORLD_EXAMPLE"] = "small-app"
+        environment.pop("HELLO_WORLD_DOCKER_CONTEXT", None)
+        output = io.StringIO()
+        with (
+            patch.object(examples, "ROOT", self.root),
+            patch.dict(os.environ, environment, clear=True),
+            contextlib.redirect_stdout(output),
+        ):
+            self.assertEqual(examples.main(["plan"]), 0)
+        self.assertIn(self.base, output.getvalue())
+        self.assertIn(self.example, output.getvalue())
+        self.assertFalse((self.root / "app").exists())
+
     def test_common_owned_application_change_is_refused_before_worktree(self):
         self.git("switch", "-q", "example/small-app")
         (self.root / "Makefile").write_text("help:\n\t@echo override\n")
@@ -79,6 +109,28 @@ class GitIntegrationContracts(unittest.TestCase):
         self.assertEqual(len(seen), 1)
         self.assertFalse(seen[0].exists())
         self.assertEqual(self.git("rev-parse", "main").strip(), self.base)
+
+    def test_one_failed_example_does_not_skip_an_independent_sibling(self):
+        """A failed candidate retains its inputs but cannot suppress another gate."""
+        from dataclasses import replace
+
+        original, = examples.plan(self.root, base=self.base, selected="small-app")
+        sibling = replace(original, name="sibling")
+        observed = []
+
+        def check(checkout, _context):
+            observed.append(checkout)
+            if len(observed) == 1:
+                raise examples.IntegrationError("first example refused")
+
+        with self.assertRaisesRegex(examples.IntegrationError, "first example refused"):
+            examples.execute(self.root, (original, sibling), "generic", check=check)
+
+        self.assertEqual(len(observed), 2)
+        self.assertTrue(observed[0].is_dir())
+        self.assertFalse(observed[1].exists())
+        self.git("worktree", "remove", "--force", str(observed[0]))
+        observed[0].parent.rmdir()
 
     def test_failed_check_retains_integration_checkout(self):
         plan, = examples.plan(self.root, base=self.base, selected="small-app")

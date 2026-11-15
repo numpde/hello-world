@@ -15,6 +15,8 @@ import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
+from infrastructure.commands.application import INHERITED_MAKE_STATE
+
 
 ROOT = Path(__file__).resolve().parents[2]
 SHA = re.compile(r"[0-9a-f]{40}\Z")
@@ -75,11 +77,11 @@ def _git(root: Path, *arguments: str, timeout: int = 30) -> str:
     return completed.stdout
 
 
-def load_catalog(path: Path) -> dict[str, str]:
+def parse_catalog(source: str) -> dict[str, str]:
     """Admit only named branches and no executable commands from catalog data."""
     try:
-        parsed = tomllib.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as error:
+        parsed = tomllib.loads(source)
+    except ValueError as error:
         raise IntegrationError("Cannot read the maintained example catalog") from error
     if not isinstance(parsed, dict) or set(parsed) != {"examples"}:
         raise IntegrationError("Catalog must contain only [[examples]]")
@@ -98,6 +100,15 @@ def load_catalog(path: Path) -> dict[str, str]:
             raise IntegrationError("Example catalog has invalid or duplicate name/branch")
         result[name] = branch
     return result
+
+
+def load_catalog(path: Path) -> dict[str, str]:
+    """Parse a catalog file for source-level and unit qualification."""
+    try:
+        source = path.read_text(encoding="utf-8")
+    except OSError as error:
+        raise IntegrationError("Cannot read the maintained example catalog") from error
+    return parse_catalog(source)
 
 
 def admit_example_paths(paths) -> None:
@@ -131,7 +142,8 @@ def plan(
 ) -> tuple[Plan, ...]:
     """Resolve committed example refs and audit their application-only changes."""
     main_sha = _commit(root, base)
-    catalog = load_catalog(root / "examples" / "catalog.toml")
+    # Bind the catalog to the selected main commit, never an edited checkout.
+    catalog = parse_catalog(_git(root, "show", f"{main_sha}:examples/catalog.toml"))
     if selected is not None and selected not in catalog:
         raise IntegrationError(f"Unknown example {selected!r}; use a catalog name")
     if example_head is not None and selected is None:
@@ -163,13 +175,18 @@ def _run_checks(checkout: Path, context: str) -> None:
     This is a compatibility gate, not native package acquisition or full
     installed-artifact qualification. No target here is allowed to download.
     """
+    child_environment = {
+        name: value for name, value in os.environ.items()
+        if name not in INHERITED_MAKE_STATE
+    }
     for goal in CHECK_TARGETS:
         print(f"Checking {goal} in {checkout}", flush=True)
         try:
             completed = subprocess.run(
                 ["make", "--no-print-directory", "-C", str(checkout), goal,
                  f"DOCKER_CONTEXT={context}"],
-                stdin=subprocess.DEVNULL, check=False, timeout=600,
+                env=child_environment, stdin=subprocess.DEVNULL,
+                check=False, timeout=600,
             )
         except (OSError, subprocess.TimeoutExpired) as error:
             raise IntegrationError(f"{goal} could not finish: {error}") from error
@@ -190,6 +207,7 @@ def execute(
     potential container recovery rather than releasing live mounted inputs.
     """
     run = _run_checks if check is None else check
+    failures = []
     for selection in plans:
         private = Path(tempfile.mkdtemp(prefix="hello-world-integration-"))
         checkout = private / "checkout"
@@ -213,29 +231,46 @@ def execute(
             _git(root, "worktree", "remove", "--force", str(checkout), timeout=60)
             private.rmdir()
             print(f"Compatibility checks passed: {selection.name}", flush=True)
-        except BaseException:
+        except IntegrationError as error:
             print(
                 f"Integration not completed for {selection.name}; "
                 f"retained checkout: {checkout}",
                 file=sys.stderr,
             )
+            failures.append(f"{selection.name}: {error} (retained {checkout})")
+        except BaseException:
+            print(
+                f"Integration interrupted for {selection.name}; "
+                f"retained checkout: {checkout}",
+                file=sys.stderr,
+            )
             raise
 
+    if failures:
+        raise IntegrationError(
+            "Independent example checks failed:\n" + "\n".join(failures)
+        )
 
-def main() -> int:
+
+def main(argv: list[str] | None = None) -> int:
     """Select exact commits from literal Make command-line inputs."""
     from infrastructure.docker.client import OperationError, required_context
 
+    arguments = sys.argv[1:] if argv is None else argv
+    if arguments not in (["plan"], ["check"]):
+        print("Use examples/plan or examples/check with BASE=<full commit SHA>", file=sys.stderr)
+        return 2
     environment = dict(os.environ)
     try:
-        context = required_context(environment)
+        context = required_context(environment) if arguments == ["check"] else None
         base = environment.get("HELLO_WORLD_EXAMPLE_BASE", "")
         selected = environment.get("HELLO_WORLD_EXAMPLE")
         override = environment.get("HELLO_WORLD_EXAMPLE_HEAD")
         selections = plan(ROOT, base=base, selected=selected, example_head=override)
         for item in selections:
             print(f"Planned {item.name}: main={item.base} example={item.example}")
-        execute(ROOT, selections, context)
+        if context is not None:
+            execute(ROOT, selections, context)
     except (IntegrationError, OperationError) as error:
         print(f"EXAMPLE INTEGRATION FAILURE: {error}", file=sys.stderr)
         return 2
