@@ -141,7 +141,7 @@ class NodeProxyOperationsContracts(unittest.TestCase):
             )
 
         with patch.object(finite_job, "run_container", side_effect=refused):
-            with self.assertRaisesRegex(client.OperationError, "Contained application job failed"):
+            with self.assertRaisesRegex(client.OperationError, "Application finite job failed"):
                 app.action(self.docker, "generic", "package/check")
         self.assertEqual(len(retained), 1)
         self.assertEqual((retained[0] / "pending").read_text(), "may still be mounted")
