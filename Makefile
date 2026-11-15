@@ -31,13 +31,13 @@ repository/image/acquire: ## Explicitly acquire the pinned repository-checker im
 	@./infrastructure/host-python -m infrastructure.commands.repository acquire
 
 repository/make/check: ## Test real Make help, dry runs and app delegation without Docker or network.
-	@./infrastructure/host-python -m unittest discover -s tests/host -t . -p 'test_*.py' -v
+	@./infrastructure/host-python -m infrastructure.testing.unittest_runner -s tests/host -t . -p 'test_*.py'
 
 repository/application/check: ## Run application-specific stdlib operation contracts in the pinned checker.
 	@./infrastructure/host-python -m infrastructure.commands.repository application-check
 
 repository/application/make/check: ## Test application-only Make behavior without Docker or network.
-	@./infrastructure/host-python -m unittest discover -s tests/application_host -t . -p 'test_*.py' -v
+	@./infrastructure/host-python -m infrastructure.testing.unittest_runner -s tests/application_host -t . -p 'test_*.py'
 
 examples/check: ## Integrate exact main/example commits and run offline compatibility gates.
 	@./infrastructure/host-python -m infrastructure.commands.example_integrations check

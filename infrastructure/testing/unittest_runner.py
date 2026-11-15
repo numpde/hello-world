@@ -1,6 +1,7 @@
 """Run unittest discovery and print complete failures after the summary.
 
-This program runs inside the test container, not in the Docker launcher.
+The same stdlib reporter runs contained repository tests and host-only GNU
+Make contract tests. It is not a fallback for native application tests.
 It accepts standard discovery options and reports an empty suite as failure.
 Tracebacks come last so the end of the log contains actionable errors.
 """
