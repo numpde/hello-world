@@ -29,6 +29,8 @@ Commands, on a host with a selected local rootless Docker context:
     make app/image/check DOCKER_CONTEXT=generic
     make repository/make/check
     make repository/check DOCKER_CONTEXT=generic
+    make repository/application/make/check
+    make repository/application/check DOCKER_CONTEXT=generic
     make app/dependencies/check DOCKER_CONTEXT=generic
     make app/tests/run DOCKER_CONTEXT=generic
     make app/package/build DOCKER_CONTEXT=generic
