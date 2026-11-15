@@ -23,6 +23,13 @@ const DENIED_HEADERS = new Set([
 const DEFAULT_TIMEOUT_MS = 5000;
 const MAX_TARGET_LENGTH = 261;
 
+function endToEndHeaders(headers) {
+  const nominated = new Set(String(headers.connection ?? '').split(',')
+    .map(name => name.trim().toLowerCase()).filter(Boolean));
+  return Object.fromEntries(Object.entries(headers).filter(([name]) =>
+    !DENIED_HEADERS.has(name) && !nominated.has(name)));
+}
+
 export class Rejected extends Error {
   constructor(message, status = 403) {
     super(message);
@@ -169,8 +176,7 @@ export function createProxy({hosts, lookup = dns.lookup,
         throw new Rejected('Acquisition GET/HEAD cannot carry a body', 400);
       }
       const addresses = await addressesFor(target.host, lookup, connectTimeoutMs);
-      const headers = Object.fromEntries(Object.entries(request.headers).filter(([name]) =>
-        !DENIED_HEADERS.has(name)));
+      const headers = endToEndHeaders(request.headers);
       headers.host = target.host;
       headers.connection = 'close';
       // The chosen numeric address is used directly: no second DNS resolution.
@@ -181,8 +187,7 @@ export function createProxy({hosts, lookup = dns.lookup,
         path: target.path, headers, agent,
       }, backend => {
         if (!response.headersSent) {
-          const downstreamHeaders = Object.fromEntries(Object.entries(backend.headers)
-            .filter(([name]) => !DENIED_HEADERS.has(name)));
+          const downstreamHeaders = endToEndHeaders(backend.headers);
           response.writeHead(backend.statusCode, downstreamHeaders);
           backend.pipe(response);
         }
