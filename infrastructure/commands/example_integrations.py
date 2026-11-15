@@ -57,8 +57,11 @@ def _git(root: Path, *arguments: str, timeout: int = 30) -> str:
     environment["GIT_TERMINAL_PROMPT"] = "0"
     try:
         completed = subprocess.run(
-            ["git", "-C", str(root), "-c", "core.hooksPath=/dev/null",
-             "-c", "commit.gpgsign=false", *arguments],
+            ["git", "-C", str(root),
+             "-c", "core.hooksPath=/dev/null",
+             "-c", "commit.gpgsign=false",
+             "-c", "user.name=hello-world qualification",
+             "-c", "user.email=qualification@invalid", *arguments],
             env=environment, stdin=subprocess.DEVNULL,
             capture_output=True, text=True, timeout=timeout, check=False,
         )
