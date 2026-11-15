@@ -12,7 +12,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from infrastructure.commands import repository
+from infrastructure.commands import job_execution, repository
 from infrastructure.docker import client, finite_job
 
 
@@ -117,25 +117,7 @@ def run_job(
         writable_mounts=outputs, network="bridge" if network else "none",
         timeout=timeout, environment=environment, workdir="/",
     )
-    result = (
-        temporary_mount.run(docker, context, job)
-        if temporary_mount is not None
-        else finite_job.run_container(docker, context, job)
-    )
-    if result.output:
-        print(result.output, end="" if result.output.endswith("\n") else "\n")
-    if result.failure:
-        print(result.failure, file=sys.stderr)
-    for diagnostic in result.diagnostics:
-        print(diagnostic, file=sys.stderr)
-    if result.status:
-        raise client.OperationError("Application container did not complete successfully")
-
-
-def read(path: Path, target: str) -> finite_job.ReadOnlyMount:
-    if path.is_symlink() or not (path.is_file() or path.is_dir()):
-        raise client.OperationError(f"Missing regular application input: {path}")
-    return finite_job.ReadOnlyMount(path, target)
+    job_execution.run(docker, context, job, temporary_mount=temporary_mount)
 
 
 def write(path: Path, target: str) -> finite_job.WritableMount:
@@ -152,11 +134,11 @@ def uv_environment() -> tuple[str, ...]:
 
 
 def input_metadata(lock: bool) -> tuple[finite_job.ReadOnlyMount, ...]:
-    sources = [read(ROOT / "pyproject.toml", "/input/pyproject.toml")]
+    sources = [finite_job.read_only_mount(ROOT / "pyproject.toml", "/input/pyproject.toml")]
     if lock:
-        sources.append(read(require_lock(), "/input/uv.lock"))
+        sources.append(finite_job.read_only_mount(require_lock(), "/input/uv.lock"))
     elif (ROOT / "uv.lock").exists():
-        sources.append(read(require_lock(), "/input/uv.lock"))
+        sources.append(finite_job.read_only_mount(require_lock(), "/input/uv.lock"))
     return tuple(sources)
 
 
@@ -192,7 +174,7 @@ def qualify_dependencies(docker: client.DockerClient, context: str, image: str, 
     env_dir = require_prepared(state, image)
     run_job(docker, context, image,
             finite_job.Command("uv", ("pip", "check", "--python", "/environment/.venv/bin/python")),
-            inputs=(read(env_dir, "/environment"),),
+            inputs=(finite_job.read_only_mount(env_dir, "/environment"),),
             environment=uv_environment())
     return env_dir
 
@@ -217,7 +199,7 @@ def action(docker: client.DockerClient, context: str, name: str) -> None:
         ) as owned_output:
             output = owned_output.path
             run_job(docker, context, image, worker("lock"),
-                    inputs=input_metadata(False) + (read(ROOT / "app/worker.py", "/worker/worker.py"),),
+                    inputs=input_metadata(False) + (finite_job.read_only_mount(ROOT / "app/worker.py", "/worker/worker.py"),),
                     outputs=(write(cache, "/cache"), finite_job.WritableMount(output, "/output")),
                     network=True, timeout=600, environment=uv_environment(),
                     temporary_mount=owned_output)
@@ -241,7 +223,7 @@ def action(docker: client.DockerClient, context: str, name: str) -> None:
         identity = prepared_identity(image)
         (state / "prepared.json").unlink(missing_ok=True)
         run_job(docker, context, image, worker("dependencies"),
-                inputs=input_metadata(True) + (read(ROOT / "app/worker.py", "/worker/worker.py"),),
+                inputs=input_metadata(True) + (finite_job.read_only_mount(ROOT / "app/worker.py", "/worker/worker.py"),),
                 outputs=(write(cache, "/cache"), write(state / "environment", "/environment")),
                 network=True, timeout=900, environment=uv_environment())
         if identity != prepared_identity(image):
@@ -262,9 +244,9 @@ def action(docker: client.DockerClient, context: str, name: str) -> None:
                     "-B", "-m", "unittest", "discover", "-s", "/testroot/tests/application",
                     "-t", "/testroot", "-p", "test_*.py", "-v")),
                 inputs=(
-                    read(ROOT / "src", "/testroot/src"),
-                    read(ROOT / "tests", "/testroot/tests"),
-                    read(env_dir, "/environment"),
+                    finite_job.read_only_mount(ROOT / "src", "/testroot/src"),
+                    finite_job.read_only_mount(ROOT / "tests", "/testroot/tests"),
+                    finite_job.read_only_mount(env_dir, "/environment"),
                 ),
                 environment=("PYTHONPATH=/testroot:/testroot/src", "PYTHONDONTWRITEBYTECODE=1", "HOME=/tmp"),
                 timeout=300)
@@ -281,9 +263,9 @@ def action(docker: client.DockerClient, context: str, name: str) -> None:
                         "--out-dir", "/output", "/project",
                     )),
                     inputs=(
-                        read(ROOT / "src", "/project/src"),
-                        read(ROOT / "pyproject.toml", "/project/pyproject.toml"),
-                        read(env_dir, "/environment"),
+                        finite_job.read_only_mount(ROOT / "src", "/project/src"),
+                        finite_job.read_only_mount(ROOT / "pyproject.toml", "/project/pyproject.toml"),
+                        finite_job.read_only_mount(env_dir, "/environment"),
                     ),
                     outputs=(write(cache, "/cache"), finite_job.WritableMount(output, "/output")),
                     environment=uv_environment() + ("UV_CACHE_DIR=/cache", "VIRTUAL_ENV=/environment/.venv"),
@@ -310,10 +292,10 @@ def action(docker: client.DockerClient, context: str, name: str) -> None:
         ) as owned_output:
             run_job(docker, context, image, worker("installed"),
                     inputs=(
-                        read(ROOT / "app/worker.py", "/worker/worker.py"),
-                        read(ROOT / "tests", "/testroot/tests"),
-                        read(env_dir, "/deps"),
-                        read(dist, "/dist"),
+                        finite_job.read_only_mount(ROOT / "app/worker.py", "/worker/worker.py"),
+                        finite_job.read_only_mount(ROOT / "tests", "/testroot/tests"),
+                        finite_job.read_only_mount(env_dir, "/deps"),
+                        finite_job.read_only_mount(dist, "/dist"),
                     ),
                     outputs=(finite_job.WritableMount(owned_output.path, "/output"),),
                     environment=uv_environment(), timeout=300,
