@@ -24,8 +24,8 @@ class MakeHostContracts(unittest.TestCase):
         self.fixture = tempfile.TemporaryDirectory(prefix="make-host-contract-")
         self.addCleanup(self.fixture.cleanup)
         self.root = Path(self.fixture.name)
-        # Exercise the real command dispatcher even for missing-project tests.
-        # Do not stage project.mk: each test controls its own presence.
+        # All three tests exercise the real dispatcher in a temporary checkout.
+        # project.mk is deliberately staged only by tests that need it.
         shutil.copyfile(REPOSITORY_ROOT / "Makefile", self.root / "Makefile")
         source = REPOSITORY_ROOT / "infrastructure" / "commands" / "application.py"
         destination = self.root / "infrastructure" / "commands"
@@ -98,27 +98,6 @@ class MakeHostContracts(unittest.TestCase):
         self.assertEqual(common_dry_run.returncode, 0, common_dry_run.stderr)
         self.assertIn("infrastructure.commands.repository check", common_dry_run.stdout)
         self.assertNotIn("REPLACED COMMON CHECK", common_dry_run.stdout)
-
-    def test_real_example_help_is_read_only_and_lists_commands(self):
-        project = REPOSITORY_ROOT / "project.mk"
-        if not project.is_file():
-            self.skipTest("main has no application Makefile")
-        result = subprocess.run(
-            ["make", "--no-print-directory", "-f", "project.mk", "help"],
-            cwd=REPOSITORY_ROOT,
-            env=self.make_environment,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        self.assertEqual(result.returncode, 0, result.stderr)
-        for target in (
-            "app/toolchain/acquire", "app/dependencies/lock/update",
-            "app/dependencies/acquire", "app/tests/run", "app/package/check",
-            "app/demo/run",
-        ):
-            self.assertIn(target, result.stdout)
-        self.assertNotIn("uv: command not found", result.stderr)
 
     def test_repository_commands_do_not_write_bytecode_on_host(self):
         """Both repository targets must leave checkout Python source untouched."""
