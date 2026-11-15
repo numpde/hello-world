@@ -207,6 +207,7 @@ def execute(
     potential container recovery rather than releasing live mounted inputs.
     """
     run = _run_checks if check is None else check
+    failures = []
     for selection in plans:
         private = Path(tempfile.mkdtemp(prefix="hello-world-integration-"))
         checkout = private / "checkout"
@@ -230,13 +231,25 @@ def execute(
             _git(root, "worktree", "remove", "--force", str(checkout), timeout=60)
             private.rmdir()
             print(f"Compatibility checks passed: {selection.name}", flush=True)
-        except BaseException:
+        except IntegrationError as error:
             print(
                 f"Integration not completed for {selection.name}; "
                 f"retained checkout: {checkout}",
                 file=sys.stderr,
             )
+            failures.append(f"{selection.name}: {error} (retained {checkout})")
+        except BaseException:
+            print(
+                f"Integration interrupted for {selection.name}; "
+                f"retained checkout: {checkout}",
+                file=sys.stderr,
+            )
             raise
+
+    if failures:
+        raise IntegrationError(
+            "Independent example checks failed:\n" + "\n".join(failures)
+        )
 
 
 def main(argv: list[str] | None = None) -> int:
