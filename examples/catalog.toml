@@ -1,0 +1,8 @@
+# Branch names only. Concrete commit IDs are resolved once per qualification.
+[[examples]]
+name = "openapi-mcp-bridge"
+branch = "example/openapi-mcp-bridge"
+
+[[examples]]
+name = "https-egress-proxy"
+branch = "example/https-egress-proxy"
