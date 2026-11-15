@@ -8,7 +8,7 @@ ifeq ($(origin DOCKER_CONTEXT),command line)
 override export HELLO_WORLD_DOCKER_CONTEXT := $(value DOCKER_CONTEXT)
 endif
 
-.PHONY: help repository/check repository/image/acquire repository/make/check repository/application/check
+.PHONY: help repository/check repository/image/acquire repository/make/check repository/application/check repository/application/make/check
 .PHONY: __app_dispatch_force
 
 help: ## Show commands, effects and next steps without touching Docker.
@@ -35,6 +35,9 @@ repository/make/check: ## Test real Make help, dry runs and app delegation witho
 
 repository/application/check: ## Run application-specific stdlib operation contracts in the pinned checker.
 	@./infrastructure/host-python -m infrastructure.commands.repository application-check
+
+repository/application/make/check: ## Test application-only Make behavior without Docker or network.
+	@./infrastructure/host-python -m unittest discover -s tests/application_host -t . -p 'test_*.py' -v
 
 # Examples keep their recipes in a separate Make process. Do not include
 # project.mk: it must not be evaluated during common help or dry runs.

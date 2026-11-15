@@ -163,6 +163,29 @@ class MakeHostContracts(unittest.TestCase):
         self.assertFalse(list(self.root.rglob("*.pyc")))
         self.assertFalse(list(self.root.rglob("__pycache__")))
 
+    def test_application_make_checks_run_separately_from_common_host_checks(self):
+        """Do not make generic Make qualification depend on an application."""
+        test_directory = self.root / "tests" / "application_host"
+        test_directory.mkdir(parents=True)
+        (self.root / "tests" / "__init__.py").write_text("")
+        (test_directory / "__init__.py").write_text("")
+        (test_directory / "test_app_help.py").write_text(
+            "import unittest\n"
+            "class AppHelp(unittest.TestCase):\n"
+            "    def test_app_only(self):\n"
+            "        self.assertTrue(True)\n"
+        )
+        result = subprocess.run(
+            ["make", "--no-print-directory", "repository/application/make/check"],
+            cwd=self.root,
+            env=self.make_environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Ran 1 test", result.stderr)
+
     def test_missing_application_makefile_has_actionable_failure(self):
         result = subprocess.run(
             ["make", "--no-print-directory", "app/tests/run"],
