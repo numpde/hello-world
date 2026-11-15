@@ -15,6 +15,8 @@ import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
+from infrastructure.commands.application import INHERITED_MAKE_STATE
+
 
 ROOT = Path(__file__).resolve().parents[2]
 SHA = re.compile(r"[0-9a-f]{40}\Z")
@@ -173,13 +175,18 @@ def _run_checks(checkout: Path, context: str) -> None:
     This is a compatibility gate, not native package acquisition or full
     installed-artifact qualification. No target here is allowed to download.
     """
+    child_environment = {
+        name: value for name, value in os.environ.items()
+        if name not in INHERITED_MAKE_STATE
+    }
     for goal in CHECK_TARGETS:
         print(f"Checking {goal} in {checkout}", flush=True)
         try:
             completed = subprocess.run(
                 ["make", "--no-print-directory", "-C", str(checkout), goal,
                  f"DOCKER_CONTEXT={context}"],
-                stdin=subprocess.DEVNULL, check=False, timeout=600,
+                env=child_environment, stdin=subprocess.DEVNULL,
+                check=False, timeout=600,
             )
         except (OSError, subprocess.TimeoutExpired) as error:
             raise IntegrationError(f"{goal} could not finish: {error}") from error
