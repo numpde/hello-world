@@ -9,6 +9,8 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import sys
+import tempfile
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -149,3 +151,93 @@ def plan(
             raise IntegrationError(f"Example {name!r} has no application project.mk in its owned diff")
         result.append(Plan(name, branch, main_sha, sha))
     return tuple(result)
+
+
+
+def _run_checks(checkout: Path, context: str) -> None:
+    """Run the same public Make targets as a normal operator.
+
+    This is a compatibility gate, not native package acquisition or full
+    installed-artifact qualification. No target here is allowed to download.
+    """
+    for goal in CHECK_TARGETS:
+        print(f"Checking {goal} in {checkout}", flush=True)
+        try:
+            completed = subprocess.run(
+                ["make", "--no-print-directory", "-C", str(checkout), goal,
+                 f"DOCKER_CONTEXT={context}"],
+                stdin=subprocess.DEVNULL, check=False, timeout=600,
+            )
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise IntegrationError(f"{goal} could not finish: {error}") from error
+        if completed.returncode:
+            raise IntegrationError(f"{goal} failed (exit {completed.returncode})")
+
+
+def execute(
+    root: Path,
+    plans: tuple[Plan, ...],
+    context: str,
+    *,
+    check=None,
+) -> None:
+    """Merge each exact revision in its own worktree and retire only on success.
+
+    If a check fails, leave the exact owned worktree intact for diagnosis and
+    potential container recovery rather than releasing live mounted inputs.
+    """
+    run = _run_checks if check is None else check
+    for selection in plans:
+        private = Path(tempfile.mkdtemp(prefix="hello-world-integration-"))
+        checkout = private / "checkout"
+        try:
+            _git(root, "worktree", "add", "--detach", str(checkout), selection.example)
+            _git(
+                checkout, "merge", "--no-ff", "--no-edit",
+                "-m", "Disposable main/example qualification", selection.base,
+                timeout=60,
+            )
+            changed = _git(
+                checkout, "diff", "--name-only", "-z", selection.base, "HEAD",
+            ).split("\0")
+            admit_example_paths(item for item in changed if item)
+            print(
+                f"Checking {selection.name}: main={selection.base} "
+                f"example={selection.example}; combined={_git(checkout, 'rev-parse', 'HEAD^{tree}').strip()}",
+                flush=True,
+            )
+            run(checkout, context)
+            _git(root, "worktree", "remove", "--force", str(checkout), timeout=60)
+            private.rmdir()
+            print(f"Compatibility checks passed: {selection.name}", flush=True)
+        except BaseException:
+            print(
+                f"Integration not completed for {selection.name}; "
+                f"retained checkout: {checkout}",
+                file=sys.stderr,
+            )
+            raise
+
+
+def main() -> int:
+    """Select exact commits from literal Make command-line inputs."""
+    from infrastructure.docker.client import OperationError, required_context
+
+    environment = dict(os.environ)
+    try:
+        context = required_context(environment)
+        base = environment.get("HELLO_WORLD_EXAMPLE_BASE", "")
+        selected = environment.get("HELLO_WORLD_EXAMPLE")
+        override = environment.get("HELLO_WORLD_EXAMPLE_HEAD")
+        selections = plan(ROOT, base=base, selected=selected, example_head=override)
+        for item in selections:
+            print(f"Planned {item.name}: main={item.base} example={item.example}")
+        execute(ROOT, selections, context)
+    except (IntegrationError, OperationError) as error:
+        print(f"EXAMPLE INTEGRATION FAILURE: {error}", file=sys.stderr)
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
