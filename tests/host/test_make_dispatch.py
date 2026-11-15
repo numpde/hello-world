@@ -24,7 +24,7 @@ class MakeHostContracts(unittest.TestCase):
         self.fixture = tempfile.TemporaryDirectory(prefix="make-host-contract-")
         self.addCleanup(self.fixture.cleanup)
         self.root = Path(self.fixture.name)
-        # All three tests exercise the real dispatcher in a temporary checkout.
+        # These Make tests use an isolated checkout with the real dispatcher.
         # project.mk is deliberately staged only by tests that need it.
         shutil.copyfile(REPOSITORY_ROOT / "Makefile", self.root / "Makefile")
         source = REPOSITORY_ROOT / "infrastructure" / "commands" / "application.py"
@@ -37,6 +37,13 @@ class MakeHostContracts(unittest.TestCase):
         (destination.parent / "__init__.py").write_text("")
         (destination / "__init__.py").write_text("")
         shutil.copyfile(source, destination / "application.py")
+        testing = destination.parent / "testing"
+        testing.mkdir()
+        (testing / "__init__.py").write_text("")
+        shutil.copyfile(
+            REPOSITORY_ROOT / "infrastructure" / "testing" / "unittest_runner.py",
+            testing / "unittest_runner.py",
+        )
         self.make_environment = {
             name: value
             for (name, value) in os.environ.items()
@@ -184,7 +191,7 @@ class MakeHostContracts(unittest.TestCase):
             check=False,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("Ran 1 test", result.stderr)
+        self.assertIn("Ran 1 test", result.stdout)
 
     def test_empty_application_host_contracts_are_not_a_success(self):
         """An app-only qualification target must not silently accept zero tests."""
