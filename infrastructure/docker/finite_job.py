@@ -59,6 +59,21 @@ class ReadOnlyMount:
     target: str
 
 
+def read_only_mount(source: Path, target: str) -> ReadOnlyMount:
+    """Admit one existing regular file or directory as an application input.
+
+    The application chooses the source and target. Only the shared Docker job
+    validates the full mount inventory and applies the read-only bind.
+    """
+    try:
+        metadata = source.lstat()
+    except OSError as error:
+        raise OperationError(f"Missing regular application input: {source}") from error
+    if not (stat.S_ISREG(metadata.st_mode) or stat.S_ISDIR(metadata.st_mode)):
+        raise OperationError(f"Missing regular application input: {source}")
+    return ReadOnlyMount(source, target)
+
+
 @dataclass(frozen=True)
 class WritableMount:
     """An existing user-owned directory for explicit output or dependency caches."""
