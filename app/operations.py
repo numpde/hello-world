@@ -9,6 +9,7 @@ import shutil
 import sys
 from pathlib import Path
 
+from infrastructure.commands import job_execution
 from infrastructure.docker import client, finite_job
 
 
@@ -26,12 +27,6 @@ ACTIONS = (
 def state_directory() -> Path:
     checkout = hashlib.sha256(os.fsencode(ROOT.resolve())).hexdigest()[:16]
     return Path.home() / ".cache" / "hello-world" / "https-egress-proxy" / checkout
-
-
-def read(path: Path, target: str) -> finite_job.ReadOnlyMount:
-    if path.is_symlink() or not (path.is_file() or path.is_dir()):
-        raise client.OperationError(f"Missing regular application input: {path}")
-    return finite_job.ReadOnlyMount(path, target)
 
 
 def run_job(
@@ -55,19 +50,7 @@ def run_job(
         timeout=timeout,
         environment=("HOME=/tmp", "npm_config_cache=/tmp/npm-cache"),
     )
-    outcome = (
-        owner.run(docker, context, job)
-        if owner is not None
-        else finite_job.run_container(docker, context, job)
-    )
-    if outcome.output:
-        print(outcome.output, end="" if outcome.output.endswith("\n") else "\n")
-    if outcome.failure:
-        print(f"APPLICATION WORK FAILURE: {outcome.failure}", file=sys.stderr)
-    for diagnostic in outcome.diagnostics:
-        print(diagnostic, file=sys.stderr)
-    if outcome.status:
-        raise client.OperationError("Contained application job failed; inspect preceding output and recovery evidence")
+    job_execution.run(docker, context, job, temporary_mount=owner)
 
 
 def stage_package(destination: Path) -> None:
@@ -95,8 +78,8 @@ def action(docker: client.DockerClient, context: str, name: str) -> None:
             docker, context, image,
             finite_job.Command("node", ("--test", "/tests/application/proxy.test.mjs")),
             inputs=(
-                read(ROOT / "src", "/src"),
-                read(ROOT / "tests/application", "/tests/application"),
+                finite_job.read_only_mount(ROOT / "src", "/src"),
+                finite_job.read_only_mount(ROOT / "tests/application", "/tests/application"),
             ),
         )
         return
@@ -116,8 +99,8 @@ def action(docker: client.DockerClient, context: str, name: str) -> None:
                 docker, context, image,
                 finite_job.Command("node", ("/worker/worker.mjs", "dependencies")),
                 inputs=(
-                    read(owned.path, "/stage"),
-                    read(ROOT / "app/worker.mjs", "/worker/worker.mjs"),
+                    finite_job.read_only_mount(owned.path, "/stage"),
+                    finite_job.read_only_mount(ROOT / "app/worker.mjs", "/worker/worker.mjs"),
                 ),
                 owner=owned,
             )
@@ -132,7 +115,7 @@ def action(docker: client.DockerClient, context: str, name: str) -> None:
                 finite_job.Command("npm", (
                     "pack", "--offline", "--ignore-scripts", "--pack-destination", "/output", "/stage/project",
                 )),
-                inputs=(read(owned.path, "/stage"),),
+                inputs=(finite_job.read_only_mount(owned.path, "/stage"),),
                 outputs=(finite_job.WritableMount(output, "/output"),),
                 owner=owned,
             )
@@ -158,9 +141,9 @@ def action(docker: client.DockerClient, context: str, name: str) -> None:
                 docker, context, image,
                 finite_job.Command("node", ("/worker/worker.mjs", "installed")),
                 inputs=(
-                    read(ROOT / "app/worker.mjs", "/worker/worker.mjs"),
-                    read(ROOT / "tests/application", "/tests/application"),
-                    read(dist, "/dist"),
+                    finite_job.read_only_mount(ROOT / "app/worker.mjs", "/worker/worker.mjs"),
+                    finite_job.read_only_mount(ROOT / "tests/application", "/tests/application"),
+                    finite_job.read_only_mount(dist, "/dist"),
                 ),
                 outputs=(finite_job.WritableMount(owned.path, "/output"),),
                 owner=owned,
