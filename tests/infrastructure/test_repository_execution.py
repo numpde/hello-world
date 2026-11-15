@@ -743,6 +743,28 @@ class RepositoryContainerContracts(unittest.TestCase):
         )
         self.assertFalse(self.executor.container_present)
 
+    def test_example_catalog_enters_checker_as_read_only_data(self):
+        """The common checker admits catalog data without running an example."""
+        directory = self.root / "examples"
+        directory.mkdir()
+        (directory / "catalog.toml").write_text(
+            '[[examples]]\nname = "fixture"\nbranch = "example/fixture"\n'
+        )
+        source_mounts = repository.public_mounts(self.root)
+        self.assertIn(
+            (directory, "/workspace/examples"),
+            {(item.source, item.target) for item in source_mounts},
+        )
+        status, _, errors = self.execute()
+        self.assertEqual(status, 0, errors)
+        create = next(
+            argv for argv, _, _ in self.executor.docker_calls if "create" in argv
+        )
+        self.assertIn(
+            f"type=bind,source={directory},target=/workspace/examples,readonly",
+            create,
+        )
+
     def test_local_editor_metadata_does_not_block_repository_checks(self):
         """A local IDE's private directory must neither block checks nor be mounted."""
         for editor_directory in (".idea", ".vscode"):
