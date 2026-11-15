@@ -45,6 +45,14 @@ UNITTEST_COMMAND = finite_job.Command(
     arguments=("-I", "-B", "/workspace/infrastructure/testing/unittest_runner.py", *UNITTEST_DISCOVERY_ARGS),
 )
 
+APPLICATION_OPERATION_COMMAND = finite_job.Command(
+    executable="python3",
+    arguments=(
+        "-I", "-B", "/workspace/infrastructure/testing/unittest_runner.py",
+        "-s", "tests/application_ops", "-t", ".", "-p", "test_*.py",
+    ),
+)
+
 
 def public_mounts(root: Path) -> tuple[finite_job.ReadOnlyMount, ...]:
     """Select the checkout entries that tests may read inside Docker.
@@ -120,9 +128,19 @@ def run_repository_command(
     Acquisition may download the pinned image. Checking uses the local image,
     runs tests in a confined job, and reports execution and cleanup failures
     separately. No host-side test fallback is permitted."""
-    if action not in {"check", "acquire"}:
+    if action not in {"check", "acquire", "application-check"}:
         raise docker_client.OperationError(f"Unknown repository operation: {action}")
     selected_context_name = docker_client.required_context(environ)
+    if action == "application-check":
+        if (root / "project.mk").is_symlink() or not (root / "project.mk").is_file():
+            raise docker_client.OperationError(
+                "An application operation check requires a regular project.mk."
+            )
+        suite = root / "tests" / "application_ops"
+        if suite.is_symlink() or not suite.is_dir():
+            raise docker_client.OperationError(
+                "Missing tests/application_ops. Add application-only stdlib contracts."
+            )
 
     with docker_client.docker_client(environ, executor) as selected_engine_client:
         if action == "acquire":
@@ -141,13 +159,18 @@ def run_repository_command(
         job_outcome = finite_job.run_container(
             selected_engine_client,
             selected_context_name,
-            repository_test_job(root, verified_image_id),
+            repository_test_job(
+                root,
+                verified_image_id,
+                APPLICATION_OPERATION_COMMAND if action == "application-check" else UNITTEST_COMMAND,
+            ),
         )
 
     if job_outcome.output:
         print(job_outcome.output, end="" if job_outcome.output.endswith("\n") else "\n")
     if job_outcome.failure:
-        print(f"REPOSITORY CHECK FAILURE: {job_outcome.failure}", file=sys.stderr)
+        category = "APPLICATION OPERATION CHECK" if action == "application-check" else "REPOSITORY CHECK"
+        print(f"{category} FAILURE: {job_outcome.failure}", file=sys.stderr)
 
     for operation_diagnostic in job_outcome.diagnostics:
         print(operation_diagnostic, file=sys.stderr)
@@ -156,7 +179,9 @@ def run_repository_command(
         print(f"Next: inspect {job_outcome.recovery / 'recovery.txt'} before retrying.", file=sys.stderr)
     elif job_outcome.status != 0:
         print(
-            f"Next: resolve the failure above, then make repository/check DOCKER_CONTEXT={selected_context_name}",
+            f"Next: resolve the failure above, then make "
+            f"{'repository/application/check' if action == 'application-check' else 'repository/check'} "
+            f"DOCKER_CONTEXT={selected_context_name}",
             file=sys.stderr,
         )
 
@@ -170,7 +195,8 @@ def main(argv: list[str] | None = None) -> int:
     for other failed jobs, and are restored before returning."""
     selected_actions = sys.argv[1:] if argv is None else argv
     if len(selected_actions) != 1:
-        print("Usage: python3 -m infrastructure.commands.repository check|acquire", file=sys.stderr)
+        print("Usage: infrastructure/host-python -m infrastructure.commands.repository "
+              "check|acquire|application-check", file=sys.stderr)
         return 2
 
     def cancel(signal_number: int, _frame: object) -> None:
