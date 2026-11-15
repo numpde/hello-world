@@ -22,6 +22,16 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
+      - name: Parse maintained Python sources without bytecode or imports
+        run: |
+          ./infrastructure/host-python - <<'PY'
+          import ast
+          from pathlib import Path
+          for root in ("infrastructure", "app", "tests", "src"):
+              if Path(root).is_dir():
+                  for path in Path(root).rglob("*.py"):
+                      ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+          PY
       - name: Qualify generic GNU Make and local-Git integration behavior
         run: make repository/make/check
       - name: Qualify application-only GNU Make behavior when declared
