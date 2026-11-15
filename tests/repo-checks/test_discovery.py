@@ -11,7 +11,7 @@ from infrastructure.commands import repository
 ROOT = Path(__file__).resolve().parents[2]
 COMMON_TEST_DIRS = {"infrastructure", "repo-checks"}
 APPLICATION_TEST_DIRS = {"application", "application_ops"}
-HOST_TEST_DIRS = {"host"}
+HOST_TEST_DIRS = {"host", "application_host"}
 
 
 class DiscoveryContracts(unittest.TestCase):
