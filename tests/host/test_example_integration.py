@@ -110,6 +110,28 @@ class GitIntegrationContracts(unittest.TestCase):
         self.assertFalse(seen[0].exists())
         self.assertEqual(self.git("rev-parse", "main").strip(), self.base)
 
+    def test_one_failed_example_does_not_skip_an_independent_sibling(self):
+        """A failed candidate retains its inputs but cannot suppress another gate."""
+        from dataclasses import replace
+
+        original, = examples.plan(self.root, base=self.base, selected="small-app")
+        sibling = replace(original, name="sibling")
+        observed = []
+
+        def check(checkout, _context):
+            observed.append(checkout)
+            if len(observed) == 1:
+                raise examples.IntegrationError("first example refused")
+
+        with self.assertRaisesRegex(examples.IntegrationError, "first example refused"):
+            examples.execute(self.root, (original, sibling), "generic", check=check)
+
+        self.assertEqual(len(observed), 2)
+        self.assertTrue(observed[0].is_dir())
+        self.assertFalse(observed[1].exists())
+        self.git("worktree", "remove", "--force", str(observed[0]))
+        observed[0].parent.rmdir()
+
     def test_failed_check_retains_integration_checkout(self):
         plan, = examples.plan(self.root, base=self.base, selected="small-app")
         seen = []
