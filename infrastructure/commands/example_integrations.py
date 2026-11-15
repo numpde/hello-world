@@ -75,11 +75,11 @@ def _git(root: Path, *arguments: str, timeout: int = 30) -> str:
     return completed.stdout
 
 
-def load_catalog(path: Path) -> dict[str, str]:
+def parse_catalog(source: str) -> dict[str, str]:
     """Admit only named branches and no executable commands from catalog data."""
     try:
-        parsed = tomllib.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as error:
+        parsed = tomllib.loads(source)
+    except ValueError as error:
         raise IntegrationError("Cannot read the maintained example catalog") from error
     if not isinstance(parsed, dict) or set(parsed) != {"examples"}:
         raise IntegrationError("Catalog must contain only [[examples]]")
@@ -98,6 +98,15 @@ def load_catalog(path: Path) -> dict[str, str]:
             raise IntegrationError("Example catalog has invalid or duplicate name/branch")
         result[name] = branch
     return result
+
+
+def load_catalog(path: Path) -> dict[str, str]:
+    """Parse a catalog file for source-level and unit qualification."""
+    try:
+        source = path.read_text(encoding="utf-8")
+    except OSError as error:
+        raise IntegrationError("Cannot read the maintained example catalog") from error
+    return parse_catalog(source)
 
 
 def admit_example_paths(paths) -> None:
@@ -131,7 +140,8 @@ def plan(
 ) -> tuple[Plan, ...]:
     """Resolve committed example refs and audit their application-only changes."""
     main_sha = _commit(root, base)
-    catalog = load_catalog(root / "examples" / "catalog.toml")
+    # Bind the catalog to the selected main commit, never an edited checkout.
+    catalog = parse_catalog(_git(root, "show", f"{main_sha}:examples/catalog.toml"))
     if selected is not None and selected not in catalog:
         raise IntegrationError(f"Unknown example {selected!r}; use a catalog name")
     if example_head is not None and selected is None:
@@ -222,20 +232,25 @@ def execute(
             raise
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     """Select exact commits from literal Make command-line inputs."""
     from infrastructure.docker.client import OperationError, required_context
 
+    arguments = sys.argv[1:] if argv is None else argv
+    if arguments not in (["plan"], ["check"]):
+        print("Use examples/plan or examples/check with BASE=<full commit SHA>", file=sys.stderr)
+        return 2
     environment = dict(os.environ)
     try:
-        context = required_context(environment)
+        context = required_context(environment) if arguments == ["check"] else None
         base = environment.get("HELLO_WORLD_EXAMPLE_BASE", "")
         selected = environment.get("HELLO_WORLD_EXAMPLE")
         override = environment.get("HELLO_WORLD_EXAMPLE_HEAD")
         selections = plan(ROOT, base=base, selected=selected, example_head=override)
         for item in selections:
             print(f"Planned {item.name}: main={item.base} example={item.example}")
-        execute(ROOT, selections, context)
+        if context is not None:
+            execute(ROOT, selections, context)
     except (IntegrationError, OperationError) as error:
         print(f"EXAMPLE INTEGRATION FAILURE: {error}", file=sys.stderr)
         return 2
