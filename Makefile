@@ -8,7 +8,7 @@ ifeq ($(origin DOCKER_CONTEXT),command line)
 override export HELLO_WORLD_DOCKER_CONTEXT := $(value DOCKER_CONTEXT)
 endif
 
-.PHONY: help repository/check repository/image/acquire repository/make/check repository/application/check repository/application/make/check
+.PHONY: help repository/check repository/image/acquire repository/make/check repository/application/check repository/application/make/check examples/check
 .PHONY: __app_dispatch_force
 
 help: ## Show commands, effects and next steps without touching Docker.
@@ -39,8 +39,26 @@ repository/application/check: ## Run application-specific stdlib operation contr
 repository/application/make/check: ## Test application-only Make behavior without Docker or network.
 	@./infrastructure/host-python -m unittest discover -s tests/application_host -t . -p 'test_*.py' -v
 
+examples/check: ## Integrate exact main/example commits and run offline compatibility gates.
+	@./infrastructure/host-python -m infrastructure.commands.example_integrations
+
 # Examples keep their recipes in a separate Make process. Do not include
 # project.mk: it must not be evaluated during common help or dry runs.
+# Selector values are captured literally only when supplied on the command line.
+# The cross-example runner resolves exact committed identities without fetching.
+unexport HELLO_WORLD_EXAMPLE
+unexport HELLO_WORLD_EXAMPLE_BASE
+unexport HELLO_WORLD_EXAMPLE_HEAD
+ifeq ($(origin EXAMPLE),command line)
+override export HELLO_WORLD_EXAMPLE := $(value EXAMPLE)
+endif
+ifeq ($(origin BASE),command line)
+override export HELLO_WORLD_EXAMPLE_BASE := $(value BASE)
+endif
+ifeq ($(origin EXAMPLE_HEAD),command line)
+override export HELLO_WORLD_EXAMPLE_HEAD := $(value EXAMPLE_HEAD)
+endif
+
 unexport HELLO_WORLD_APP_TARGET
 
 app/%: override export HELLO_WORLD_APP_TARGET = $@
