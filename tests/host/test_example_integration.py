@@ -31,6 +31,7 @@ class GitIntegrationContracts(unittest.TestCase):
         self.git("switch", "-q", "-c", "example/small-app")
         (self.root / "app").mkdir()
         (self.root / "app" / "worker.py").write_text("print('sample')\n")
+        (self.root / "project.mk").write_text("app/tests/run:\n\t@echo app\n")
         self.git("add", ".")
         self.git("commit", "-q", "-m", "app")
         self.example = self.git("rev-parse", "HEAD").strip()
