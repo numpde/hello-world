@@ -11,6 +11,9 @@ pay-to-play. The proxy implements GET/HEAD for absolute-form HTTP URLs and
 CONNECT for HTTPS port 443. It requires an exact destination-host allowlist,
 rejects private/reserved IPv4 DNS results, filters proxy credentials and
 hop-by-hop headers, and exposes GET /healthz. There are no runtime npm packages.
+CONNECT admits an allowlisted hostname and connects to its public IPv4 address,
+then relays opaque bytes. It cannot verify the protocol or hostname inside the
+tunnel; a shared IP address can serve other virtual hosts.
 
 Boundaries
 ----------
