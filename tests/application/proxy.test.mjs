@@ -121,19 +121,24 @@ test('HTTP absolute-form GET forwards path and strips proxy credentials', async 
   let headers;
   const backend = http.createServer((req, res) => {
     headers = req.headers;
-    res.writeHead(200, {'content-type': 'text/plain'});
+    res.writeHead(200, {'content-type': 'text/plain', 'Connection': 'close, X-Backend-Hop',
+      'X-Backend-Hop': 'private', 'X-Backend-End': 'visible'});
     res.end(req.url);
   });
   const upstreamPort = await listening(backend);
   t.after(() => new Promise(resolve => backend.close(resolve)));
   const port = await withProxy(t, {dial: () => net.connect({host: '127.0.0.1', port: upstreamPort})});
   const result = await response(port, {path: 'http://registry.npmjs.org/some/package?version=1',
-    headers: {'Proxy-Authorization': 'Basic secret', 'X-Test': 'fixture'}});
+    headers: {'Proxy-Authorization': 'Basic secret', 'X-Test': 'fixture',
+      'Connection': 'keep-alive, X-Request-Hop', 'X-Request-Hop': 'private'}});
   assert.equal(result.status, 200);
   assert.equal(result.body, '/some/package?version=1');
   assert.equal(headers.host, 'registry.npmjs.org');
   assert.equal(headers['proxy-authorization'], undefined);
   assert.equal(headers['x-test'], 'fixture');
+  assert.equal(headers['x-request-hop'], undefined);
+  assert.equal(result.headers['x-backend-hop'], undefined);
+  assert.equal(result.headers['x-backend-end'], 'visible');
 });
 
 test('shutdown retires its listener without touching other services', async t => {
