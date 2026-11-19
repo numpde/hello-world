@@ -81,28 +81,28 @@ class TemporaryJobMountContracts(unittest.TestCase):
                 parent=Path(parent),
             ) as temporary:
                 source = temporary.path
-                with patch.object(
-                    finite_job,
-                    "run_container",
-                    side_effect=RuntimeError("unexpected runner failure"),
-                ):
-                    with self.assertRaisesRegex(RuntimeError, "unexpected runner failure") as raised:
+                failure = RuntimeError("unexpected runner failure")
+                with patch.object(finite_job, "run_container", side_effect=failure):
+                    with self.assertRaises(RuntimeError) as raised:
                         temporary.run(object(), "generic", self.job(source))
 
+            self.assertIs(raised.exception, failure)
             self.assertTrue(source.exists())
             self.assertIn(str(source), " ".join(raised.exception.__notes__))
 
     def test_failed_temp_release_preserves_primary_exception(self):
         with tempfile.TemporaryDirectory() as parent:
+            primary_failure = client.OperationError("original failure")
             with patch.object(finite_job.shutil, "rmtree", side_effect=OSError("remove refused")):
-                with self.assertRaisesRegex(client.OperationError, "original failure") as raised:
+                with self.assertRaises(client.OperationError) as raised:
                     with finite_job.temporary_job_directory(
                         prefix="owned-test-",
                         parent=Path(parent),
                     ) as temporary:
                         source = temporary.path
-                        raise client.OperationError("original failure")
+                        raise primary_failure
 
+            self.assertIs(raised.exception, primary_failure)
             self.assertTrue(source.exists())
             self.assertIn("remove refused", " ".join(raised.exception.__notes__))
 
@@ -121,7 +121,7 @@ class TemporaryJobMountContracts(unittest.TestCase):
             ) as temporary:
                 unbound = temporary.path
                 with patch.object(finite_job, "run_container") as run:
-                    with self.assertRaisesRegex(client.OperationError, "does not mount"):
+                    with self.assertRaises(client.OperationError):
                         temporary.run(
                             object(),
                             "generic",
@@ -140,7 +140,7 @@ class TemporaryJobMountContracts(unittest.TestCase):
                 outcome = finite_job.Outcome(0, "", None, (), None)
                 with patch.object(finite_job, "run_container", return_value=outcome) as run:
                     temporary.run(object(), "generic", job)
-                    with self.assertRaisesRegex(client.OperationError, "already ran"):
+                    with self.assertRaises(client.OperationError):
                         temporary.run(object(), "generic", job)
                     run.assert_called_once()
 

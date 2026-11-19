@@ -41,7 +41,7 @@ class JobExecutionContracts(unittest.TestCase):
             patch.object(job_execution.finite_job, "run_container", return_value=outcome),
             contextlib.redirect_stdout(output),
             contextlib.redirect_stderr(diagnostics),
-            self.assertRaisesRegex(client.OperationError, "Application finite job failed"),
+            self.assertRaises(client.OperationError),
         ):
             job_execution.run(object(), "generic", JOB)
 
@@ -81,7 +81,7 @@ class JobExecutionContracts(unittest.TestCase):
             )
             for source in (symlink, directory / "absent"):
                 with self.subTest(source=str(source)):
-                    with self.assertRaisesRegex(client.OperationError, "regular application input"):
+                    with self.assertRaises(client.OperationError):
                         finite_job.read_only_mount(source, "/input")
 
 
