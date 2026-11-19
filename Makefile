@@ -8,6 +8,19 @@ ifeq ($(origin DOCKER_CONTEXT),command line)
 override export HELLO_WORLD_DOCKER_CONTEXT := $(value DOCKER_CONTEXT)
 endif
 
+# Runner selection is literal and command-line-only, like Docker context.
+# Ambient TEST_RUNNER and HELLO_WORLD_TEST_RUNNER never select a test toolchain.
+unexport TEST_RUNNER
+unexport TEST_WORKERS
+unexport HELLO_WORLD_TEST_RUNNER
+unexport HELLO_WORLD_TEST_WORKERS
+ifeq ($(origin TEST_RUNNER),command line)
+override export HELLO_WORLD_TEST_RUNNER := $(value TEST_RUNNER)
+endif
+ifeq ($(origin TEST_WORKERS),command line)
+override export HELLO_WORLD_TEST_WORKERS := $(value TEST_WORKERS)
+endif
+
 .PHONY: help repository/check repository/image/acquire repository/make/check repository/application/check repository/application/make/check examples/check examples/plan
 .PHONY: __app_dispatch_force
 
