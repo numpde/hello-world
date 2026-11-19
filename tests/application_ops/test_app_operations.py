@@ -82,9 +82,11 @@ class ApplicationOperationsContracts(unittest.TestCase):
 
     def test_failed_reacquisition_does_not_leave_prior_prepared_stamp(self):
         self.prepared()
-        with patch.object(app, "run_job", side_effect=client.OperationError("remote index unavailable")):
-            with self.assertRaisesRegex(client.OperationError, "remote index unavailable"):
+        failure = client.OperationError("remote index unavailable")
+        with patch.object(app, "run_job", side_effect=failure):
+            with self.assertRaises(client.OperationError) as caught:
                 app.action(object(), "science", "dependencies/acquire")
+        self.assertIs(caught.exception, failure)
         self.assertFalse((self.state / "prepared.json").exists())
 
     def test_no_preparation_is_a_precise_offline_failure(self):
