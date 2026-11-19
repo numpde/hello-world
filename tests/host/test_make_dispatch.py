@@ -115,6 +115,10 @@ class MakeHostContracts(unittest.TestCase):
             source / "commands" / "repository.py",
             destination / "commands" / "repository.py",
         )
+        shutil.copyfile(
+            source / "commands" / "runner_selection.py",
+            destination / "commands" / "runner_selection.py",
+        )
         shutil.copytree(
             source / "docker",
             destination / "docker",
