@@ -106,6 +106,75 @@ class RunnerSelectionContracts(unittest.TestCase):
                             repository.CHECKER_IMAGE_REFERENCE in arg for arg in args))
         self.assertFalse(any(arg == "--network=none" for arg in args))
 
+    def test_parallel_check_invokes_only_prepared_parallel_image_and_job(self):
+        import contextlib
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import Mock, patch
+
+        from infrastructure.commands import repository
+        from infrastructure.docker import finite_job
+
+        docker = Mock()
+        image_id = "sha256:" + "c" * 64
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "Makefile").write_text("help:\n\t@echo fixture\n")
+            (root / "infrastructure").mkdir()
+            (root / "tests").mkdir()
+            with (
+                patch.object(repository.docker_client, "docker_client",
+                             return_value=contextlib.nullcontext(docker)),
+                patch.object(repository, "parallel_image", return_value=image_id) as admitted,
+                patch.object(finite_job, "run_container",
+                             return_value=finite_job.Outcome(0, "", None, (), None)) as executed,
+            ):
+                status = repository.run_repository_command(
+                    "check", {
+                        "HELLO_WORLD_DOCKER_CONTEXT": "generic",
+                        "HELLO_WORLD_TEST_RUNNER": "parallel",
+                        "HELLO_WORLD_TEST_WORKERS": "3",
+                    }, root=root,
+                )
+        self.assertEqual(status, 0)
+        admitted.assert_called_once_with(docker, "generic")
+        docker.image.assert_not_called()
+        docker.acquire.assert_not_called()
+        executed.assert_called_once()
+        job = executed.call_args.args[2]
+        self.assertEqual(job.image_id, image_id)
+        self.assertEqual(job.network, "none")
+        self.assertEqual(job.writable_mounts, ())
+        self.assertEqual(job.command.arguments[job.command.arguments.index("-j") + 1], "3")
+        self.assertIn("/workspace/infrastructure/testing/parallel_runner.py",
+                      job.command.arguments)
+
+    def test_missing_parallel_image_does_not_start_or_download_any_job(self):
+        import contextlib
+        from unittest.mock import Mock, patch
+
+        from infrastructure.commands import repository
+        from infrastructure.docker import finite_job
+
+        docker = Mock()
+        with (
+            patch.object(repository.docker_client, "docker_client",
+                         return_value=contextlib.nullcontext(docker)),
+            patch.object(repository, "parallel_image",
+                         side_effect=OperationError("parallel checker absent")),
+            patch.object(finite_job, "run_container") as run,
+            self.assertRaises(OperationError),
+        ):
+            repository.run_repository_command(
+                "check", {
+                    "HELLO_WORLD_DOCKER_CONTEXT": "generic",
+                    "HELLO_WORLD_TEST_RUNNER": "parallel",
+                },
+            )
+        docker.acquire.assert_not_called()
+        docker.call.assert_not_called()
+        run.assert_not_called()
+
     def test_application_operation_check_does_not_implicitly_use_parallel(self):
         self.assertEqual(runner_selection.select({}, "application-check").name, "serial")
         with self.assertRaises(OperationError):
