@@ -7,7 +7,10 @@ handled by the shared Docker modules. Repository tests never run on the host.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
+import re
 import signal
 import stat
 import sys
@@ -18,6 +21,8 @@ from infrastructure.docker import finite_job
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+PARALLEL_DOCKERFILE = REPOSITORY_ROOT / "containers/parallel-checker/Dockerfile"
+PARALLEL_IMAGE_LABEL = "org.numpde.hello-world.parallel-checker-source-sha256"
 CHECKER_IMAGE_REFERENCE = (
     "docker.io/library/python:3.12.16-slim-bookworm@"
     "sha256:623674a14ef93d052bb9b0de4dbf5f28eb578a35263838941cc8aa43213c1487"
@@ -53,6 +58,68 @@ APPLICATION_OPERATION_COMMAND = finite_job.Command(
         "-s", "tests/application_ops", "-t", ".", "-p", "test_*.py",
     ),
 )
+
+
+def parallel_test_command(workers: int) -> finite_job.Command:
+    """Use one adapter for both stdlib repository discovery roots."""
+    return finite_job.Command(
+        executable="python3",
+        arguments=(
+            "-I", "-B", "/workspace/infrastructure/testing/parallel_runner.py",
+            "-j", str(workers), *UNITTEST_DISCOVERY_ARGS,
+        ),
+    )
+
+
+def parallel_image_definition() -> tuple[str, str]:
+    """Derive the local image name from reviewed Dockerfile and base pins."""
+    fingerprint = hashlib.sha256(
+        PARALLEL_DOCKERFILE.read_bytes() + CHECKER_IMAGE_REFERENCE.encode("utf-8")
+    ).hexdigest()
+    return f"localhost/hello-world/parallel-checker:{fingerprint[:20]}", fingerprint
+
+
+def parallel_image(docker: docker_client.DockerClient, context: str) -> str:
+    """Only admit a locally prepared image with matching source identity."""
+    tag, expected_fingerprint = parallel_image_definition()
+    inspection = docker.call("image", "inspect", "--format", "{{json .}}", tag)
+    if inspection.status:
+        raise docker_client.OperationError(
+            f"Parallel checker image is absent or inaccessible. "
+            f"Next: make repository/image/acquire DOCKER_CONTEXT={context} TEST_RUNNER=parallel"
+        )
+    try:
+        metadata = json.loads(docker_client.checked_result(inspection, "Parallel checker inspection"))
+        image_id = metadata["Id"]
+        source_fingerprint = metadata["Config"]["Labels"][PARALLEL_IMAGE_LABEL]
+    except (KeyError, TypeError, ValueError) as error:
+        raise docker_client.OperationError("Docker returned malformed parallel checker metadata") from error
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", image_id) or source_fingerprint != expected_fingerprint:
+        raise docker_client.OperationError("Parallel checker image does not match its pinned source definition")
+    return image_id
+
+
+def acquire_parallel_image(docker: docker_client.DockerClient, context: str) -> str:
+    """Explicitly build the parallel checker from SHA-256-pinned wheel URLs.
+
+    No ordinary repository check may reach this networked Docker build path.
+    """
+    docker.acquire(CHECKER_IMAGE_REFERENCE, CHECKER_IMAGE_ID)
+    tag, fingerprint = parallel_image_definition()
+    docker_client.checked_result(
+        docker.call(
+            "build", "--pull=false", "--network=default",
+            "--platform=linux/amd64",
+            "--file", str(PARALLEL_DOCKERFILE),
+            "--tag", tag,
+            "--label", f"{PARALLEL_IMAGE_LABEL}={fingerprint}",
+            "--build-arg", f"PYTHON_IMAGE={CHECKER_IMAGE_REFERENCE}",
+            str(PARALLEL_DOCKERFILE.parent),
+            timeout=600,
+        ),
+        "Parallel checker acquisition",
+    )
+    return parallel_image(docker, context)
 
 
 def public_mounts(root: Path) -> tuple[finite_job.ReadOnlyMount, ...]:
