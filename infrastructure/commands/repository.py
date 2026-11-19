@@ -18,6 +18,7 @@ from pathlib import Path
 
 from infrastructure.docker import client as docker_client
 from infrastructure.docker import finite_job
+from infrastructure.commands import runner_selection
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -198,6 +199,7 @@ def run_repository_command(
     separately. No host-side test fallback is permitted."""
     if action not in {"check", "acquire", "application-check"}:
         raise docker_client.OperationError(f"Unknown repository operation: {action}")
+    runner = runner_selection.select(environ, action)
     selected_context_name = docker_client.required_context(environ)
     if action == "application-check":
         if (root / "project.mk").is_symlink() or not (root / "project.mk").is_file():
@@ -212,25 +214,38 @@ def run_repository_command(
 
     with docker_client.docker_client(environ, executor) as selected_engine_client:
         if action == "acquire":
-            observed_image_id = selected_engine_client.acquire(CHECKER_IMAGE_REFERENCE, CHECKER_IMAGE_ID)
-            print(f"Acquired checker image on Docker context {selected_context_name} ({observed_image_id = }).")
-            print(f"Next: make repository/check DOCKER_CONTEXT={selected_context_name}")
+            if runner.name == "parallel":
+                observed_image_id = acquire_parallel_image(selected_engine_client, selected_context_name)
+                print(f"Acquired parallel checker on Docker context {selected_context_name} ({observed_image_id = }).")
+                print(
+                    f"Next: make repository/check DOCKER_CONTEXT={selected_context_name} "
+                    f"TEST_RUNNER=parallel TEST_WORKERS={runner.workers}"
+                )
+            else:
+                observed_image_id = selected_engine_client.acquire(CHECKER_IMAGE_REFERENCE, CHECKER_IMAGE_ID)
+                print(f"Acquired checker image on Docker context {selected_context_name} ({observed_image_id = }).")
+                print(f"Next: make repository/check DOCKER_CONTEXT={selected_context_name}")
             return 0
-        verified_image_id = selected_engine_client.image(
-            reference=CHECKER_IMAGE_REFERENCE,
-            expected_id=CHECKER_IMAGE_ID,
-            acquire_hint=(
-                f"make repository/image/acquire DOCKER_CONTEXT={selected_context_name} && "
-                f"make repository/check DOCKER_CONTEXT={selected_context_name}"
-            ),
-        )
+        if runner.name == "parallel":
+            verified_image_id = parallel_image(selected_engine_client, selected_context_name)
+            command = parallel_test_command(runner.workers)
+        else:
+            verified_image_id = selected_engine_client.image(
+                reference=CHECKER_IMAGE_REFERENCE,
+                expected_id=CHECKER_IMAGE_ID,
+                acquire_hint=(
+                    f"make repository/image/acquire DOCKER_CONTEXT={selected_context_name} && "
+                    f"make repository/check DOCKER_CONTEXT={selected_context_name}"
+                ),
+            )
+            command = APPLICATION_OPERATION_COMMAND if action == "application-check" else UNITTEST_COMMAND
         job_outcome = finite_job.run_container(
             selected_engine_client,
             selected_context_name,
             repository_test_job(
                 root,
                 verified_image_id,
-                APPLICATION_OPERATION_COMMAND if action == "application-check" else UNITTEST_COMMAND,
+                command,
             ),
         )
 
@@ -249,7 +264,8 @@ def run_repository_command(
         print(
             f"Next: resolve the failure above, then make "
             f"{'repository/application/check' if action == 'application-check' else 'repository/check'} "
-            f"DOCKER_CONTEXT={selected_context_name}",
+            f"DOCKER_CONTEXT={selected_context_name}"
+            + (f" TEST_RUNNER=parallel TEST_WORKERS={runner.workers}" if runner.name == "parallel" else ""),
             file=sys.stderr,
         )
 
