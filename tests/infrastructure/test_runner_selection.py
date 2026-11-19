@@ -56,7 +56,6 @@ class RunnerSelectionContracts(unittest.TestCase):
 
     def test_parallel_image_is_not_accepted_without_a_matching_source_label(self):
         import json
-        from types import SimpleNamespace
         from unittest.mock import Mock
 
         from infrastructure.commands import repository
@@ -82,7 +81,6 @@ class RunnerSelectionContracts(unittest.TestCase):
         )
 
     def test_explicit_parallel_acquisition_uses_pinned_base_and_networked_build(self):
-        from types import SimpleNamespace
         from unittest.mock import Mock, patch
         from infrastructure.commands import repository
         from infrastructure.docker.client import Result
