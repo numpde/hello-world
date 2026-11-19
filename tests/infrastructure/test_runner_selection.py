@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest
 
 from infrastructure.docker.client import OperationError
-from infrastructure.testing import runner_selection
+from infrastructure.commands import runner_selection
 
 
 class RunnerSelectionContracts(unittest.TestCase):
