@@ -207,7 +207,7 @@ class RepositoryContainerContracts(unittest.TestCase):
         """A successful job must still prove confinement, sanitize Docker inputs and retire its container."""
         status, output, errors = self.execute()
         self.assertEqual(status, 0, errors)
-        self.assertIn("17 tests", output)
+        self.assertIn(self.executor.workload_output.strip(), output)
         self.assertFalse(self.executor.container_present)
         arguments = [call[0] for call in self.executor.docker_calls]
         create = next(argv for argv in arguments if "create" in argv)
@@ -243,7 +243,7 @@ class RepositoryContainerContracts(unittest.TestCase):
         (application_tests / "test_adapter.py").write_text("import unittest\n")
         status, output, errors = self.execute("application-check")
         self.assertEqual(status, 0, errors)
-        self.assertIn("17 tests", output)
+        self.assertIn(self.executor.workload_output.strip(), output)
         create = next(argv for argv, _, _ in self.executor.docker_calls if "create" in argv)
         self.assertIn("tests/application_ops", create)
         self.assertNotIn("tests/infrastructure", create)
@@ -624,7 +624,7 @@ class RepositoryContainerContracts(unittest.TestCase):
                 (operation_status, output, errors) = self.execute()
 
                 self.assertEqual(operation_status, 0, errors)
-                self.assertIn("17 tests", output)
+                self.assertIn(self.executor.workload_output.strip(), output)
                 self.assertFalse(self.executor.container_present)
                 self.assertTrue(any("create" in argv for (argv, _, _) in self.executor.docker_calls))
 
@@ -777,7 +777,7 @@ class RepositoryContainerContracts(unittest.TestCase):
         (operation_status, output, errors) = self.execute()
 
         self.assertEqual(operation_status, 0, errors)
-        self.assertIn("17 tests", output)
+        self.assertIn(self.executor.workload_output.strip(), output)
         create_arguments = next(
             argv for (argv, _, _) in self.executor.docker_calls if "create" in argv
         )
@@ -845,17 +845,19 @@ class RepositoryContainerContracts(unittest.TestCase):
     def test_partial_signal_handler_installation_restores_previous_handlers(self):
         """Failure while installing SIGTERM must restore an earlier SIGINT handler."""
         observed_signal_calls = []
+        failure = RuntimeError("SIGTERM installation failed")
 
         def simulate_signal_installation(signal_number, replacement_handler):
             observed_signal_calls.append((signal_number, replacement_handler))
             if len(observed_signal_calls) == 2:
-                raise RuntimeError("SIGTERM installation failed")
+                raise failure
             return repository.signal.SIG_DFL
 
         with patch.object(repository.signal, "signal", side_effect=simulate_signal_installation):
-            with self.assertRaisesRegex(RuntimeError, "SIGTERM installation failed"):
+            with self.assertRaises(RuntimeError) as caught:
                 repository.main(["check"])
 
+        self.assertIs(caught.exception, failure)
         self.assertEqual(
             [signal_number for (signal_number, _) in observed_signal_calls],
             [repository.signal.SIGINT, repository.signal.SIGTERM, repository.signal.SIGINT],
