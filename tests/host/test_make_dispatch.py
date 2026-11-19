@@ -210,6 +210,34 @@ class MakeHostContracts(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("NO TESTS RAN", result.stdout + result.stderr)
 
+    def test_runner_options_are_explicit_and_do_not_inherit_ambient_values(self):
+        """No background environment setting selects a different Docker runner."""
+        wrapper = self.root / "infrastructure" / "host-python"
+        wrapper.write_text(
+            "#!/bin/sh\n"
+            "printf 'RUNNER=%s WORKERS=%s\\n' "
+            "\"$HELLO_WORLD_TEST_RUNNER\" \"$HELLO_WORLD_TEST_WORKERS\"\n"
+        )
+        wrapper.chmod(0o755)
+
+        poisoned = self.make_environment | {
+            "HELLO_WORLD_TEST_RUNNER": "parallel",
+            "HELLO_WORLD_TEST_WORKERS": "4",
+            "TEST_RUNNER": "parallel",
+            "TEST_WORKERS": "4",
+        }
+        for arguments, expected in (
+            ([], "RUNNER= WORKERS="),
+            (["TEST_RUNNER=parallel", "TEST_WORKERS=2"], "RUNNER=parallel WORKERS=2"),
+        ):
+            with self.subTest(arguments=arguments):
+                result = subprocess.run(
+                    ["make", "--no-print-directory", "repository/check", *arguments],
+                    cwd=self.root, env=poisoned, capture_output=True, text=True, check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn(expected, result.stdout)
+
     def test_missing_application_makefile_has_actionable_failure(self):
         result = subprocess.run(
             ["make", "--no-print-directory", "app/tests/run"],
