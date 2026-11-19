@@ -26,9 +26,13 @@ Image ownership
 ---------------
 The parallel checker is a separately tagged local image built from the same
 sha256-selected Python base as the serial checker. Its source-derived tag and
-label identify the reviewed Dockerfile and base reference. The Dockerfile
-installs two exact SHA-256-pinned upstream wheels: unittest-parallel 1.8.6 and
-its mandatory dependency coverage 7.17.3. Building explicitly acquires the
+label check consistency with the reviewed Dockerfile and base reference.
+This is not a provenance attestation: another local image can carry the same
+label. Trust in the build rests on explicit acquisition and control of the
+selected rootless engine; execution uses the immutable image ID obtained
+from inspection, not the mutable tag. The Dockerfile installs two exact
+SHA-256-pinned upstream wheels: unittest-parallel 1.8.6 and its mandatory
+dependency coverage 7.17.3. Building explicitly acquires the
 base and permits network access to fetch the pinned wheels; checking only
 inspects the prepared image. Neither mode installs packages on the host.
 An absent, mismatched or malformed parallel image fails before Docker create.
@@ -40,8 +44,11 @@ same networkless read-only mounts, container resource limits, cleanup and
 recovery. The only differences are the prepared image and the selected
 test executable. The framework-only adapter invokes unittest-parallel at
 module granularity with a bounded number of worker processes, separately
-for each maintained discovery root. It rejects an empty discovery, preserves
-nonzero exit status, and puts complete failure details after the summaries.
+for each maintained discovery root under one shared 150-second time budget,
+derived from the finite job's 180-second limit. A timed-out root stops further
+discovery and preserves any available partial output after previous summaries.
+It rejects an empty discovery, preserves nonzero exit status, and puts
+complete failure details after the summaries.
 It cannot silently switch to the serial runner.
 
 Scope and acceptance

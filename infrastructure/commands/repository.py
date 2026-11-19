@@ -84,7 +84,7 @@ def parallel_image_definition() -> tuple[str, str]:
 
 
 def parallel_image(docker: docker_client.DockerClient, context: str) -> str:
-    """Only admit a locally prepared image with matching source identity."""
+    """Verify the local image label; this does not attest its build provenance."""
     tag, expected_fingerprint = parallel_image_definition()
     inspection = docker.call("image", "inspect", "--format", "{{json .}}", tag)
     if inspection.status:
