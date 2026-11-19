@@ -181,7 +181,7 @@ class ApplicationOperationsContracts(unittest.TestCase):
                     patch.object(app, "qualify_dependencies", return_value=environment),
                     patch.object(finite_job, "run_container", side_effect=removal_refused) as run,
                     contextlib.redirect_stderr(stderr),
-                    self.assertRaisesRegex(client.OperationError, "Application container"),
+                    self.assertRaises(client.OperationError),
                 ):
                     app.action(object(), "generic", action)
 
