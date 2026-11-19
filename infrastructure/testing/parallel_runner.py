@@ -11,6 +11,7 @@ import argparse
 import re
 import subprocess
 import sys
+import time
 
 
 SUMMARY = re.compile(r"(?m)^-{70}\nRan \d+ tests? in [^\n]+\n\n(?:OK|FAILED)[^\n]*")
@@ -38,13 +39,22 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("-s", "--start-directory", action="append", required=True)
     parser.add_argument("-t", "--top-level-directory", required=True)
     parser.add_argument("-p", "--pattern", default="test_*.py")
+    parser.add_argument("--budget-seconds", type=int, required=True)
     arguments = parser.parse_args(argv)
     if not 1 <= arguments.jobs <= 4:
         parser.error("Worker count must be 1–4.")
+    if arguments.budget_seconds <= 0:
+        parser.error("Shared time budget must be positive.")
 
+    deadline = time.monotonic() + arguments.budget_seconds
     status = 0
     failed_details = []
     for source in arguments.start_directory:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            status = 2
+            failed_details.append(f"{source}: shared time budget exhausted before discovery")
+            break
         command = [
             "unittest-parallel", "-j", str(arguments.jobs), "--level=module",
             "-s", source, "-t", arguments.top_level_directory,
@@ -52,11 +62,23 @@ def main(argv: list[str] | None = None) -> int:
         ]
         try:
             result = subprocess.run(
-                command, capture_output=True, text=True, timeout=150, check=False,
+                command, capture_output=True, text=True, timeout=remaining, check=False,
             )
-        except (OSError, subprocess.TimeoutExpired) as error:
-            print(f"PARALLEL RUNNER FAILURE: {type(error).__name__}: {error}", file=sys.stderr)
-            return 2
+        except subprocess.TimeoutExpired as error:
+            status = 2
+            failed_details.append(f"{source}: parallel runner exceeded shared time budget")
+            # TimeoutExpired contains bytes even with text=True. Preserve the
+            # available diagnostics after earlier roots' completed summaries.
+            for stream_name, partial_output in (("stdout", error.stdout), ("stderr", error.stderr)):
+                if partial_output:
+                    content = (partial_output.decode("utf-8", errors="replace")
+                               if isinstance(partial_output, bytes) else partial_output)
+                    failed_details.append(f"{source}: partial {stream_name}:\n{content}")
+            break
+        except OSError as error:
+            status = 2
+            failed_details.append(f"{source}: PARALLEL RUNNER FAILURE: {type(error).__name__}: {error}")
+            break
         if result.stdout:
             print(result.stdout, end="" if result.stdout.endswith("\n") else "\n")
         report, failures = separate_failure_details(result.stderr)
