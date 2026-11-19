@@ -201,18 +201,19 @@ def execute(
     *,
     check=None,
 ) -> None:
-    """Merge each exact revision in its own worktree and retire only on success.
+    """Merge each exact revision on a temporary named branch.
 
-    If a check fails, leave the exact owned worktree intact for diagnosis and
-    potential container recovery rather than releasing live mounted inputs.
+    A successful check retires its worktree and exact qualification branch.
+    Failures retain both for diagnosis and potential container recovery.
     """
     run = _run_checks if check is None else check
     failures = []
     for selection in plans:
         private = Path(tempfile.mkdtemp(prefix="hello-world-integration-"))
         checkout = private / "checkout"
+        owner_branch = f"hello-world/qualification/{private.name}"
         try:
-            _git(root, "worktree", "add", "--detach", str(checkout), selection.example)
+            _git(root, "worktree", "add", "-b", owner_branch, str(checkout), selection.example)
             _git(
                 checkout, "merge", "--no-ff", "--no-edit",
                 "-m", "Disposable main/example qualification", selection.base,
@@ -229,19 +230,23 @@ def execute(
             )
             run(checkout, context)
             _git(root, "worktree", "remove", "--force", str(checkout), timeout=60)
+            _git(root, "branch", "-D", owner_branch)
             private.rmdir()
             print(f"Compatibility checks passed: {selection.name}", flush=True)
         except IntegrationError as error:
             print(
                 f"Integration not completed for {selection.name}; "
-                f"retained checkout: {checkout}",
+                f"retained checkout: {checkout}; qualification branch: {owner_branch}",
                 file=sys.stderr,
             )
-            failures.append(f"{selection.name}: {error} (retained {checkout})")
+            failures.append(
+                f"{selection.name}: {error} "
+                f"(retained checkout {checkout}; branch {owner_branch})"
+            )
         except BaseException:
             print(
                 f"Integration interrupted for {selection.name}; "
-                f"retained checkout: {checkout}",
+                f"retained checkout: {checkout}; qualification branch: {owner_branch}",
                 file=sys.stderr,
             )
             raise
