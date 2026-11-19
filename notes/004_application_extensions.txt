@@ -148,13 +148,15 @@ Planning makes no worktree, Docker or network changes. Checking merges each
 example with the selected main revision in an owned disposable worktree and
 executes the ordinary repository/make/check, repository/check,
 repository/application/make/check and repository/application/check targets.
-A confirmed successful worktree is removed. A failure retains its checkout,
-reports both SHAs and the combined tree identity when a merge completed, and
-does not suppress independent examples. No failure triggers a global Docker
-prune. Before removing a retained checkout, inspect any finite-job recovery
-record and independently confirm that its Docker containers have retired.
-Only then run git worktree remove --force <retained-checkout> followed by
-rmdir <retained-parent>; these cleanup steps are never automatic on failure.
+Each disposable checkout is attached to a uniquely named local branch under
+hello-world/qualification/; no detached HEAD is created. On success, the
+runner removes both its exact worktree and qualification branch. A failure
+retains both and reports their identities without suppressing independent
+examples. No failure triggers a global Docker prune. Before manual cleanup,
+inspect any finite-job recovery record and independently confirm its Docker
+containers have retired. Only then remove the retained worktree, delete the
+reported qualification branch, and remove its empty parent directory. These
+cleanup steps are never automatic on failure.
 
 These are **compatibility gates**, not full native-package acceptance gates.
 Actual dependency acquisition, installed-wheel or installed-tarball checks,

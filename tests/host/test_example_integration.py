@@ -46,6 +46,17 @@ class GitIntegrationContracts(unittest.TestCase):
         self.assertEqual(operation.returncode, 0, operation.stderr)
         return operation.stdout
 
+    def checked_out_branch(self, checkout):
+        """A compatibility checkout must be attached to a named local branch."""
+        result = subprocess.run(
+            ["git", "-C", str(checkout), "symbolic-ref", "--quiet", "--short", "HEAD"],
+            capture_output=True, text=True, timeout=10, check=False,
+        )
+        self.assertEqual(result.returncode, 0, "Integration checkout has detached HEAD")
+        branch = result.stdout.strip()
+        self.assertTrue(branch.startswith("hello-world/qualification/"))
+        return branch
+
     def test_plan_uses_exact_commits_without_fetch_or_mutating_branches(self):
         plan, = examples.plan(self.root, base=self.base, selected="small-app")
         self.assertEqual((plan.base, plan.example), (self.base, self.example))
@@ -103,11 +114,13 @@ class GitIntegrationContracts(unittest.TestCase):
         def check(checkout, _context):
             self.assertTrue((checkout / "app" / "worker.py").is_file())
             self.assertTrue((checkout / "examples" / "catalog.toml").is_file())
-            seen.append(checkout)
+            seen.append((checkout, self.checked_out_branch(checkout)))
 
         examples.execute(self.root, (plan,), "generic", check=check)
         self.assertEqual(len(seen), 1)
-        self.assertFalse(seen[0].exists())
+        checkout, branch = seen[0]
+        self.assertFalse(checkout.exists())
+        self.assertEqual(self.git("branch", "--list", branch), "")
         self.assertEqual(self.git("rev-parse", "main").strip(), self.base)
 
     def test_one_failed_example_does_not_skip_an_independent_sibling(self):
@@ -119,7 +132,7 @@ class GitIntegrationContracts(unittest.TestCase):
         observed = []
 
         def check(checkout, _context):
-            observed.append(checkout)
+            observed.append((checkout, self.checked_out_branch(checkout)))
             if len(observed) == 1:
                 raise examples.IntegrationError("first example refused")
 
@@ -127,26 +140,34 @@ class GitIntegrationContracts(unittest.TestCase):
             examples.execute(self.root, (original, sibling), "generic", check=check)
 
         self.assertEqual(len(observed), 2)
-        self.assertTrue(observed[0].is_dir())
-        self.assertFalse(observed[1].exists())
-        self.git("worktree", "remove", "--force", str(observed[0]))
-        observed[0].parent.rmdir()
+        failed_checkout, failed_branch = observed[0]
+        succeeded_checkout, succeeded_branch = observed[1]
+        self.assertTrue(failed_checkout.is_dir())
+        self.assertIn(failed_branch, self.git("branch", "--list", failed_branch))
+        self.assertFalse(succeeded_checkout.exists())
+        self.assertEqual(self.git("branch", "--list", succeeded_branch), "")
+        self.git("worktree", "remove", "--force", str(failed_checkout))
+        self.git("branch", "-D", failed_branch)
+        failed_checkout.parent.rmdir()
 
     def test_failed_check_retains_integration_checkout(self):
         plan, = examples.plan(self.root, base=self.base, selected="small-app")
         seen = []
 
         def fail(checkout, _context):
-            seen.append(checkout)
+            seen.append((checkout, self.checked_out_branch(checkout)))
             raise examples.IntegrationError("injected qualification failure")
 
         with self.assertRaisesRegex(examples.IntegrationError, "injected qualification failure"):
             examples.execute(self.root, (plan,), "generic", check=fail)
 
-        self.assertTrue(seen[0].is_dir())
-        self.assertTrue((seen[0] / "app" / "worker.py").is_file())
-        self.git("worktree", "remove", "--force", str(seen[0]))
-        seen[0].parent.rmdir()
+        checkout, branch = seen[0]
+        self.assertTrue(checkout.is_dir())
+        self.assertTrue((checkout / "app" / "worker.py").is_file())
+        self.assertIn(branch, self.git("branch", "--list", branch))
+        self.git("worktree", "remove", "--force", str(checkout))
+        self.git("branch", "-D", branch)
+        checkout.parent.rmdir()
 
 
 if __name__ == "__main__":
