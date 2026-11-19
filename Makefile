@@ -30,7 +30,8 @@ help: ## Show commands, effects and next steps without touching Docker.
 	  'Example (replace example-rootless with your existing context):' \
 	  '  make repository/image/acquire DOCKER_CONTEXT=example-rootless' \
 	  '  make repository/check DOCKER_CONTEXT=example-rootless' \
-	  'Acquisition can download images; repository/check stays offline.' ''
+	  'Acquisition can download images; repository/check stays offline.' \
+	  'Optional: TEST_RUNNER=parallel TEST_WORKERS=2 (acquire its image explicitly first).' ''
 	@awk -F ':[^#]*## ' '/^[a-z][a-z0-9/-]*:.*## / { printf "  %-28s %s\n", $$1, $$2 }' Makefile
 	@if test -f project.mk; then \
 		printf '%s\n' '' 'Application commands:'; \

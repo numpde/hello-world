@@ -1,0 +1,56 @@
+Optional parallel repository checker
+====================================
+
+19 November 2026
+Status: candidate; requires explicit generic-engine qualification.
+
+Default behavior
+----------------
+make repository/check DOCKER_CONTEXT=generic
+
+No option installs anything. Serial uses the existing digest-pinned
+Python stdlib checker and failure-last unittest reporter, unchanged.
+
+Parallel behavior
+-----------------
+make repository/image/acquire DOCKER_CONTEXT=generic TEST_RUNNER=parallel
+make repository/check DOCKER_CONTEXT=generic TEST_RUNNER=parallel TEST_WORKERS=2
+
+TEST_RUNNER accepts only serial (default) or parallel. Parallel defaults to
+two workers; explicit TEST_WORKERS accepts integers 1 through 4. Providing
+TEST_WORKERS with serial, or requesting parallel for repository/application/check,
+is an error. Only command-line Make variables are forwarded; ambient runner
+settings do not select a toolchain. Invalid settings never fall back.
+
+Image ownership
+---------------
+The parallel checker is a separately tagged local image built from the same
+sha256-selected Python base as the serial checker. Its source-derived tag and
+label identify the reviewed Dockerfile and base reference. The Dockerfile
+installs two exact SHA-256-pinned upstream wheels: unittest-parallel 1.8.6 and
+its mandatory dependency coverage 7.17.3. Building explicitly acquires the
+base and permits network access to fetch the pinned wheels; checking only
+inspects the prepared image. Neither mode installs packages on the host.
+An absent, mismatched or malformed parallel image fails before Docker create.
+
+Execution and reporting
+-----------------------
+The parallel mode reuses finite_job.Job, rootless context selection, the
+same networkless read-only mounts, container resource limits, cleanup and
+recovery. The only differences are the prepared image and the selected
+test executable. The framework-only adapter invokes unittest-parallel at
+module granularity with a bounded number of worker processes, separately
+for each maintained discovery root. It rejects an empty discovery, preserves
+nonzero exit status, and puts complete failure details after the summaries.
+It cannot silently switch to the serial runner.
+
+Scope and acceptance
+--------------------
+This option is available for repository/check only, not host Make tests or
+application package tests. Hosted CI checks syntax and Make boundary contracts;
+the opt-in image acquisition and both runner modes require independent checks
+on the selected rootless Docker engine. The parallel mode is not assumed to
+be faster for small suites, and speed is not a correctness criterion.
+
+The wheel SHA-256 values in the Dockerfile were taken from the PyPI release
+records for unittest-parallel 1.8.6 and coverage 7.17.3.
