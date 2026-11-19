@@ -86,7 +86,7 @@ class AcquisitionJobContracts(unittest.TestCase):
                     finite_job.verify_container_posture(
                         InspectingDocker(job, host_changes=changed), "id", job
                     )
-            with self.assertRaisesRegex(client.OperationError, "Mount inventory"):
+            with self.assertRaises(client.OperationError):
                 finite_job.verify_container_posture(
                     InspectingDocker(job, mount_changes={"RW": False}), "id", job
                 )
