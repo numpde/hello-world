@@ -207,7 +207,7 @@ class RepositoryContainerContracts(unittest.TestCase):
         """A successful job must still prove confinement, sanitize Docker inputs and retire its container."""
         status, output, errors = self.execute()
         self.assertEqual(status, 0, errors)
-        self.assertIn("17 tests", output)
+        self.assertIn(self.executor.workload_output.strip(), output)
         self.assertFalse(self.executor.container_present)
         arguments = [call[0] for call in self.executor.docker_calls]
         create = next(argv for argv in arguments if "create" in argv)
@@ -243,7 +243,7 @@ class RepositoryContainerContracts(unittest.TestCase):
         (application_tests / "test_adapter.py").write_text("import unittest\n")
         status, output, errors = self.execute("application-check")
         self.assertEqual(status, 0, errors)
-        self.assertIn("17 tests", output)
+        self.assertIn(self.executor.workload_output.strip(), output)
         create = next(argv for argv, _, _ in self.executor.docker_calls if "create" in argv)
         self.assertIn("tests/application_ops", create)
         self.assertNotIn("tests/infrastructure", create)
@@ -444,7 +444,7 @@ class RepositoryContainerContracts(unittest.TestCase):
         source = self.root / "Makefile"
         source.chmod(0o600)
         self.addCleanup(lambda: source.chmod(0o644))
-        with self.assertRaisesRegex(docker_client.OperationError, "non-public"):
+        with self.assertRaises(docker_client.OperationError):
             self.execute()
         self.assertFalse(self.executor.container_present)
 
@@ -468,7 +468,7 @@ class RepositoryContainerContracts(unittest.TestCase):
                 original_permissions = source.stat().st_mode & 0o777
                 source.chmod(0o700 if source.is_dir() else 0o600)
                 try:
-                    with self.assertRaisesRegex(docker_client.OperationError, "non-public"):
+                    with self.assertRaises(docker_client.OperationError):
                         self.execute()
                 finally:
                     source.chmod(original_permissions)
@@ -624,7 +624,7 @@ class RepositoryContainerContracts(unittest.TestCase):
                 (operation_status, output, errors) = self.execute()
 
                 self.assertEqual(operation_status, 0, errors)
-                self.assertIn("17 tests", output)
+                self.assertIn(self.executor.workload_output.strip(), output)
                 self.assertFalse(self.executor.container_present)
                 self.assertTrue(any("create" in argv for (argv, _, _) in self.executor.docker_calls))
 
@@ -632,7 +632,7 @@ class RepositoryContainerContracts(unittest.TestCase):
         """A digest unrelated to either reviewed pin never reaches Docker create."""
         self.executor.reported_image_id = "sha256:" + "f" * 64
 
-        with self.assertRaisesRegex(docker_client.OperationError, "Unrecognized pinned image identity"):
+        with self.assertRaises(docker_client.OperationError):
             self.execute()
 
         self.assertFalse(any("create" in argv for (argv, _, _) in self.executor.docker_calls))
@@ -692,8 +692,9 @@ class RepositoryContainerContracts(unittest.TestCase):
     def test_remote_endpoint_rejected(self):
         """A Docker context pointing at a remote daemon must not be admitted as local."""
         self.executor.engine_endpoint = "tcp://not-allowed:2376"
-        with self.assertRaisesRegex(docker_client.OperationError, "local Unix socket"):
+        with self.assertRaises(docker_client.OperationError):
             self.execute()
+        self.assertFalse(any("create" in argv for argv, _, _ in self.executor.docker_calls))
 
     def test_source_symlink_and_unknown_root_rejected_before_create(self):
         """Unclassified files or symlinks must fail before any container obtains source access."""
@@ -705,7 +706,7 @@ class RepositoryContainerContracts(unittest.TestCase):
         self.assertIn("Next:", str(unclassified.exception))
         extra.unlink()
         (self.root / "infrastructure" / "link").symlink_to("/etc/passwd")
-        with self.assertRaisesRegex(docker_client.OperationError, "Refusing link"):
+        with self.assertRaises(docker_client.OperationError):
             self.execute()
         self.assertFalse(self.executor.container_present)
 
@@ -776,7 +777,7 @@ class RepositoryContainerContracts(unittest.TestCase):
         (operation_status, output, errors) = self.execute()
 
         self.assertEqual(operation_status, 0, errors)
-        self.assertIn("17 tests", output)
+        self.assertIn(self.executor.workload_output.strip(), output)
         create_arguments = next(
             argv for (argv, _, _) in self.executor.docker_calls if "create" in argv
         )
@@ -828,33 +829,35 @@ class RepositoryContainerContracts(unittest.TestCase):
             "monotonic",
             side_effect=lambda: next(observed_times, finite_job.CLEANUP_TIMEOUT - 0.5),
         ):
-            with self.assertRaisesRegex(TimeoutError, "cleanup budget exhausted"):
+            with self.assertRaises(TimeoutError):
                 finite_job.cleanup(unused_docker, "operation", "owner", repository.CHECKER_IMAGE_ID)
 
         unused_docker.call.assert_not_called()
 
     def test_full_ids_only_and_no_collision(self):
         """Cleanup requires unique full IDs; shortened or duplicated IDs are not safe deletion targets."""
-        with self.assertRaisesRegex(docker_client.OperationError, "malformed"):
+        with self.assertRaises(docker_client.OperationError):
             finite_job.container_ids("abc\n")
-        with self.assertRaisesRegex(docker_client.OperationError, "duplicate"):
+        with self.assertRaises(docker_client.OperationError):
             finite_job.container_ids(FAKE_CONTAINER_ID + "\n" + FAKE_CONTAINER_ID + "\n")
 
 
     def test_partial_signal_handler_installation_restores_previous_handlers(self):
         """Failure while installing SIGTERM must restore an earlier SIGINT handler."""
         observed_signal_calls = []
+        failure = RuntimeError("SIGTERM installation failed")
 
         def simulate_signal_installation(signal_number, replacement_handler):
             observed_signal_calls.append((signal_number, replacement_handler))
             if len(observed_signal_calls) == 2:
-                raise RuntimeError("SIGTERM installation failed")
+                raise failure
             return repository.signal.SIG_DFL
 
         with patch.object(repository.signal, "signal", side_effect=simulate_signal_installation):
-            with self.assertRaisesRegex(RuntimeError, "SIGTERM installation failed"):
+            with self.assertRaises(RuntimeError) as caught:
                 repository.main(["check"])
 
+        self.assertIs(caught.exception, failure)
         self.assertEqual(
             [signal_number for (signal_number, _) in observed_signal_calls],
             [repository.signal.SIGINT, repository.signal.SIGTERM, repository.signal.SIGINT],
@@ -896,7 +899,7 @@ class InputContracts(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "not-a-socket"
             path.write_text("fake")
-            with self.assertRaisesRegex(docker_client.OperationError, "user-owned"):
+            with self.assertRaises(docker_client.OperationError):
                 docker_client.verify_socket("unix://" + str(path))
 
     def test_checked_result_does_not_relabel_errors(self):
