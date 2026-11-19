@@ -50,6 +50,8 @@ class RunnerSelectionContracts(unittest.TestCase):
         self.assertIn("/workspace/infrastructure/testing/parallel_runner.py", command.arguments)
         self.assertEqual(command.arguments[command.arguments.index("-j") + 1], "2")
         self.assertEqual(command.arguments.count("-s"), 2)
+        budget_seconds = int(command.arguments[command.arguments.index("--budget-seconds") + 1])
+        self.assertEqual(budget_seconds, repository.finite_job.WORK_TIMEOUT - 30)
         self.assertEqual(repository.UNITTEST_COMMAND.executable, "python3")
         self.assertIn("/workspace/infrastructure/testing/unittest_runner.py",
                       repository.UNITTEST_COMMAND.arguments)

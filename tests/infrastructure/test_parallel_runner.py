@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import subprocess
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -41,7 +42,10 @@ class ParallelAdapterContracts(unittest.TestCase):
 
         def execute(command, **options):
             calls.append((command, options))
-            return outcomes[len(calls) - 1]
+            outcome = outcomes[len(calls) - 1]
+            if isinstance(outcome, BaseException):
+                raise outcome
+            return outcome
 
         stdout, stderr = io.StringIO(), io.StringIO()
         with (
@@ -51,7 +55,7 @@ class ParallelAdapterContracts(unittest.TestCase):
         ):
             status = parallel_runner.main([
                 "-j", "2", "-s", "tests/infrastructure", "-s", "tests/repo-checks",
-                "-t", ".", "-p", "test_*.py",
+                "-t", ".", "-p", "test_*.py", "--budget-seconds", "150",
             ])
         return status, stdout.getvalue(), stderr.getvalue(), calls
 
@@ -92,13 +96,48 @@ class ParallelAdapterContracts(unittest.TestCase):
         self.assertEqual(len(calls), 2)
         self.assertIn("NO TESTS RAN", report)
 
+    def test_each_root_receives_only_the_remaining_shared_budget(self):
+        outcomes = [SimpleNamespace(returncode=0, stdout="", stderr=SUCCESS)] * 2
+        with patch.object(parallel_runner.time, "monotonic", side_effect=(0, 0, 60)):
+            status, _out, _err, calls = self.invoke(outcomes)
+        self.assertEqual(status, 0)
+        self.assertEqual([options["timeout"] for _command, options in calls], [150, 90])
+
+    def test_exhausted_budget_does_not_launch_another_root(self):
+        outcomes = [SimpleNamespace(returncode=0, stdout="", stderr=SUCCESS)]
+        with patch.object(parallel_runner.time, "monotonic", side_effect=(0, 0, 151)):
+            status, _out, report, calls = self.invoke(outcomes)
+        self.assertEqual(status, 2)
+        self.assertEqual(len(calls), 1)
+        self.assertIn("tests/repo-checks: shared time budget exhausted", report)
+        self.assertIn("Failure details (end of parallel run)", report)
+
+    def test_timeout_retains_partial_output_after_prior_failure_details(self):
+        outcomes = [
+            SimpleNamespace(returncode=1, stdout="", stderr=FAILURE),
+            subprocess.TimeoutExpired(
+                cmd="unittest-parallel", timeout=15,
+                output=b"partial worker stdout", stderr=b"partial worker stderr",
+            ),
+        ]
+        with patch.object(parallel_runner.time, "monotonic", side_effect=(0, 0, 135)):
+            status, _out, report, calls = self.invoke(outcomes)
+        self.assertEqual(status, 2)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[1][1]["timeout"], 15)
+        self.assertIn("tests/repo-checks: parallel runner exceeded shared time budget", report)
+        self.assertIn("partial worker stdout", report)
+        self.assertIn("partial worker stderr", report)
+        self.assertLess(report.index("Ran 2 tests"), report.index("distinguishing evidence"))
+        self.assertLess(report.index("distinguishing evidence"), report.index("partial worker stderr"))
+
     def test_missing_parallel_executable_fails_without_serial_fallback(self):
         with patch.object(parallel_runner.subprocess, "run", side_effect=FileNotFoundError("unittest-parallel")):
             output = io.StringIO()
             with contextlib.redirect_stderr(output):
                 status = parallel_runner.main([
                     "-j", "2", "-s", "tests/infrastructure", "-t", ".",
-                    "-p", "test_*.py",
+                    "-p", "test_*.py", "--budget-seconds", "150",
                 ])
         self.assertNotEqual(status, 0)
         self.assertIn("unittest-parallel", output.getvalue())
