@@ -24,6 +24,7 @@ from infrastructure.commands import runner_selection
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 PARALLEL_DOCKERFILE = REPOSITORY_ROOT / "containers/parallel-checker/Dockerfile"
 PARALLEL_IMAGE_LABEL = "org.numpde.hello-world.parallel-checker-source-sha256"
+PARALLEL_TIME_RESERVE_SECONDS = 30
 CHECKER_IMAGE_REFERENCE = (
     "docker.io/library/python:3.12.16-slim-bookworm@"
     "sha256:623674a14ef93d052bb9b0de4dbf5f28eb578a35263838941cc8aa43213c1487"
@@ -67,7 +68,9 @@ def parallel_test_command(workers: int) -> finite_job.Command:
         executable="python3",
         arguments=(
             "-I", "-B", "/workspace/infrastructure/testing/parallel_runner.py",
-            "-j", str(workers), *UNITTEST_DISCOVERY_ARGS,
+            "-j", str(workers),
+            "--budget-seconds", str(finite_job.WORK_TIMEOUT - PARALLEL_TIME_RESERVE_SECONDS),
+            *UNITTEST_DISCOVERY_ARGS,
         ),
     )
 
