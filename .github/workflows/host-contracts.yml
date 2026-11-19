@@ -8,6 +8,7 @@ on:
       - 'fix/openapi-shared-app-*'
       - 'fix/proxy-shared-app-*'
       - 'example/*'
+      - 'feature/optional-unittest-parallel-*'
   pull_request:
   workflow_dispatch:
 
